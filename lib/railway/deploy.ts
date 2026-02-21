@@ -267,7 +267,7 @@ function decWsFrame(buf) {
 server.on('upgrade', function(req, socket, head) {
   var url = req.url || '';
   if (!url.startsWith('/canvas-ws')) {
-    socket.write('HTTP/1.1 404 Not Found\\r\\n\\r\\n');
+    socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
     socket.destroy();
     return;
   }
@@ -278,13 +278,12 @@ server.on('upgrade', function(req, socket, head) {
   var bAccept = crypto.createHash('sha1')
     .update(bKey + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
   socket.write(
-    'HTTP/1.1 101 Switching Protocols\\r\\n' +
-    'Upgrade: websocket\\r\\n' +
-    'Connection: Upgrade\\r\\n' +
-    'Sec-WebSocket-Accept: ' + bAccept + '\\r\\n\\r\\n'
+    'HTTP/1.1 101 Switching Protocols\r\n' +
+    'Upgrade: websocket\r\n' +
+    'Connection: Upgrade\r\n' +
+    'Sec-WebSocket-Accept: ' + bAccept + '\r\n\r\n'
   );
 
-  // Open TCP connection to gateway
   var gw = net.createConnection(18789, '127.0.0.1');
   var gwBuf = Buffer.alloc(0);
   var gwHttpOk = false;
@@ -299,78 +298,97 @@ server.on('upgrade', function(req, socket, head) {
   });
   gw.on('close', function() { try { socket.destroy(); } catch(x) {} });
 
-  // Queue any early browser frames until auth completes
+  // Queue early browser frames until we are fully connected upstream.
   socket.on('data', function(d) { if (!authOk) brQueue.push(d); });
 
   gw.on('connect', function() {
-    // HTTP upgrade request to gateway's WebSocket endpoint
     var gwKey = crypto.randomBytes(16).toString('base64');
+    var authHdr = gwToken ? ('Authorization: Bearer ' + gwToken + '\r\n') : '';
     gw.write(
-      'GET /__openclaw__/canvas-ws HTTP/1.1\\r\\n' +
-      'Host: localhost:18789\\r\\n' +
-      'Upgrade: websocket\\r\\n' +
-      'Connection: Upgrade\\r\\n' +
-      'Sec-WebSocket-Key: ' + gwKey + '\\r\\n' +
-      'Sec-WebSocket-Version: 13\\r\\n\\r\\n'
+      'GET /__openclaw__/canvas-ws HTTP/1.1\r\n' +
+      'Host: localhost:18789\r\n' +
+      'Upgrade: websocket\r\n' +
+      'Connection: Upgrade\r\n' +
+      'Sec-WebSocket-Key: ' + gwKey + '\r\n' +
+      'Sec-WebSocket-Version: 13\r\n' +
+      authHdr +
+      '\r\n'
     );
   });
+
+  function switchToRaw(initialGatewayBytes) {
+    authOk = true;
+    var rest = initialGatewayBytes || Buffer.alloc(0);
+    gwBuf = null;
+
+    gw.removeAllListeners('data');
+    socket.removeAllListeners('data');
+    socket.removeAllListeners('error');
+    socket.removeAllListeners('close');
+    gw.removeAllListeners('error');
+    gw.removeAllListeners('close');
+
+    socket.on('error', function() { try { gw.destroy(); } catch(e) {} });
+    socket.on('close', function() { try { gw.destroy(); } catch(e) {} });
+    gw.on('error', function() { try { socket.destroy(); } catch(e) {} });
+    gw.on('close', function() { try { socket.destroy(); } catch(e) {} });
+
+    brQueue.forEach(function(d) { gw.write(d); });
+    brQueue = null;
+
+    if (rest.length) socket.write(rest);
+
+    gw.on('data', function(d) { try { socket.write(d); } catch(e) {} });
+    socket.on('data', function(d) { try { gw.write(d); } catch(e) {} });
+  }
 
   gw.on('data', function(chunk) {
     gwBuf = Buffer.concat([gwBuf, chunk]);
 
-    // Skip past HTTP 101 response headers
     if (!gwHttpOk) {
-      var sep = gwBuf.indexOf('\\r\\n\\r\\n');
+      var sep = gwBuf.indexOf('\r\n\r\n');
       if (sep < 0) return;
+      var statusLine = gwBuf.slice(0, gwBuf.indexOf('\r\n')).toString('utf8');
+      if (!/^HTTP\/1\.1 101\b/.test(statusLine)) {
+        console.error('[canvas-ws] gateway upgrade failed:', statusLine);
+        try { socket.destroy(); } catch(e) {}
+        try { gw.destroy(); } catch(e) {}
+        return;
+      }
       gwHttpOk = true;
       gwBuf = gwBuf.slice(sep + 4);
     }
 
-    // Intercept first WS frame: must be the connect.challenge event
+    // Tolerate both auth protocols:
+    // - old: first frame is connect.challenge and we reply connect.auth
+    // - new: no challenge; start raw forwarding immediately
     if (!authOk) {
       var fr = decWsFrame(gwBuf);
-      if (!fr) return; // need more data
-      if (fr.op === 1) { // text frame
+      if (!fr) return;
+
+      if (fr.op === 1) {
         try {
           var msg = JSON.parse(fr.pl.toString('utf8'));
           if (msg.event === 'connect.challenge') {
             var nonce = (msg.payload || {}).nonce || '';
-            // Respond with auth using our gateway token + the nonce
             gw.write(encWsFrame(JSON.stringify({
               type: 'event',
               event: 'connect.auth',
               payload: { token: gwToken, nonce: nonce }
             })));
-            authOk = true;
-            var rest = gwBuf.slice(fr.total);
-            gwBuf = null;
-
-            // Tear down intercepting listeners and switch to raw pipe
-            gw.removeAllListeners('data');
-            socket.removeAllListeners('data');
-            socket.removeAllListeners('error');
-            socket.removeAllListeners('close');
-            gw.removeAllListeners('error');
-            gw.removeAllListeners('close');
-
-            socket.on('error', function() { try { gw.destroy(); } catch(e) {} });
-            socket.on('close', function() { try { gw.destroy(); } catch(e) {} });
-            gw.on('error', function() { try { socket.destroy(); } catch(e) {} });
-            gw.on('close', function() { try { socket.destroy(); } catch(e) {} });
-
-            // Flush queued browser frames to gateway
-            brQueue.forEach(function(d) { gw.write(d); });
-            brQueue = null;
-
-            // Forward any remaining gateway data to browser
-            if (rest.length) socket.write(rest);
-
-            // Raw-pipe both directions from here on
-            gw.on('data', function(d) { try { socket.write(d); } catch(e) {} });
-            socket.on('data', function(d) { try { gw.write(d); } catch(e) {} });
+            switchToRaw(gwBuf.slice(fr.total));
+            return;
           }
-        } catch(e) { /* not JSON or not challenge — gateway may close */ }
+          switchToRaw(gwBuf);
+          return;
+        } catch(e) {
+          switchToRaw(gwBuf);
+          return;
+        }
       }
+
+      switchToRaw(gwBuf);
+      return;
     }
   });
 });
