@@ -123,11 +123,11 @@ export default function AgentSwitcher() {
         </Button>
 
         {open && (
-          <div className="absolute left-0 top-full mt-1 z-50 w-56 rounded-md border border-zinc-700 bg-zinc-900 shadow-xl py-1">
-            <p className="px-3 py-1.5 text-[10px] font-mono text-zinc-500 uppercase tracking-wider">
+          <div className="absolute left-0 top-full mt-1 z-[10000] w-56 rounded-md border border-zinc-600 bg-zinc-800 shadow-2xl py-1" style={{ opacity: 1 }}>
+            <p className="px-3 py-1.5 text-[10px] font-mono text-zinc-400 uppercase tracking-wider">
               Your Agents
             </p>
-            <div className="border-t border-zinc-700 mb-1" />
+            <div className="border-t border-zinc-600 mb-1" />
 
             {data.instances.map(inst => {
               const label = inst.agentName || inst.name
@@ -139,7 +139,7 @@ export default function AgentSwitcher() {
                 <button
                   key={inst.id}
                   onClick={() => !inst.isActive && switchAgent(inst.id)}
-                  className={`w-full flex items-center gap-2 px-3 py-2 text-sm text-left hover:bg-zinc-800 transition-colors ${inst.isActive ? 'text-white' : 'text-zinc-400'}`}
+                  className={`w-full flex items-center gap-2 px-3 py-2 text-sm text-left hover:bg-zinc-700 transition-colors ${inst.isActive ? 'text-white' : 'text-zinc-300'}`}
                 >
                   <span className={`w-2 h-2 rounded-full flex-shrink-0 ${color}`} />
                   <span className="flex-1 truncate">{label}</span>
@@ -150,22 +150,22 @@ export default function AgentSwitcher() {
 
             {data.remaining > 0 && (
               <>
-                <div className="border-t border-zinc-700 mt-1 mb-1" />
+                <div className="border-t border-zinc-600 mt-1 mb-1" />
                 <button
                   onClick={() => { setOpen(false); setShowNewDialog(true) }}
-                  className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-400 hover:bg-zinc-800 transition-colors"
+                  className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-400 hover:bg-zinc-700 transition-colors"
                 >
                   <Plus className="w-3.5 h-3.5" />
                   <span>New Agent</span>
-                  <span className="ml-auto text-xs text-zinc-500">{data.remaining} left</span>
+                  <span className="ml-auto text-xs text-zinc-400">{data.remaining} left</span>
                 </button>
               </>
             )}
 
             {data.remaining === 0 && data.limit > 0 && (
               <>
-                <div className="border-t border-zinc-700 mt-1" />
-                <p className="px-3 py-2 text-xs text-zinc-500">
+                <div className="border-t border-zinc-600 mt-1" />
+                <p className="px-3 py-2 text-xs text-zinc-400">
                   Agent limit reached ({data.limit}/{data.limit})
                 </p>
               </>
@@ -176,7 +176,7 @@ export default function AgentSwitcher() {
 
       {/* New Agent modal */}
       {showNewDialog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
+        <div className="fixed inset-0 z-[10001] flex items-center justify-center">
           {/* Backdrop */}
           <div
             className="absolute inset-0 bg-black/70 backdrop-blur-sm"
