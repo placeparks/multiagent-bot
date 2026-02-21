@@ -306,7 +306,7 @@ server.on('upgrade', function(req, socket, head) {
     // HTTP upgrade request to gateway's WebSocket endpoint
     var gwKey = crypto.randomBytes(16).toString('base64');
     gw.write(
-      'GET /__openclaw__/ws HTTP/1.1\\r\\n' +
+      'GET /__openclaw__/canvas-ws HTTP/1.1\\r\\n' +
       'Host: localhost:18789\\r\\n' +
       'Upgrade: websocket\\r\\n' +
       'Connection: Upgrade\\r\\n' +
