@@ -239,7 +239,7 @@ export async function applySecurityUpdate(instanceId: string, changes: SecurityC
 /**
  * Rebuild the full OpenClaw config from DB and push it to the running container.
  */
-async function rebuildAndApply(instanceId: string) {
+export async function rebuildAndApply(instanceId: string) {
   // Load current full config from DB
   const userConfig = await loadConfigFromDB(instanceId)
 

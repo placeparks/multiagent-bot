@@ -231,13 +231,9 @@ export function generateOpenClawConfig(userConfig: UserConfiguration) {
     }
   }
 
-  // Memory search → agents.defaults.memorySearch
-  if (userConfig.memoryEnabled) {
-    config.agents.defaults.memorySearch = {
-      enabled: true,
-      sources: ['memory', 'sessions']
-    }
-  }
+  // NOTE: We do NOT enable OpenClaw's internal memorySearch when Nexus Memory is on.
+  // OpenClaw's memorySearch requires git to commit workspace files, which fails in Railway
+  // containers (no git author configured). Nexus Memory uses web_fetch + our REST API instead.
 
   // Canvas → top-level canvasHost (not tools.canvas)
   if (userConfig.canvasEnabled) {

@@ -207,6 +207,18 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
       data: { pendingConfig: Prisma.DbNull }
     })
 
+    // If memory is enabled, run a config rebuild so Nexus Memory instructions
+    // get injected into the system prompt (the initial deploy doesn't do this).
+    if (config.memoryEnabled) {
+      try {
+        const { rebuildAndApply } = await import('@/lib/deploy/config-updater')
+        await rebuildAndApply(deployment.instanceId)
+        console.log('   Memory instructions injected into system prompt')
+      } catch (memErr) {
+        console.warn('   Memory instructions injection skipped:', memErr)
+      }
+    }
+
     console.log(`🚀 Successfully deployed instance for user ${userId}`)
     console.log(`   Instance ID: ${deployment.instanceId}`)
     console.log(`   Container ID: ${deployment.containerId}`)
