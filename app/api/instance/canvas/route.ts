@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
+import { prisma } from '@/lib/prisma'
 import { getConfigForDisplay } from '@/lib/deploy/config-updater'
 import { getActiveInstance } from '@/lib/get-active-instance'
 
@@ -24,9 +25,17 @@ export async function GET() {
   let isRunning = false
   if (canvasEnabled && result.instance.accessUrl) {
     const base = result.instance.accessUrl.replace(/\/$/, '')
+    const configRow = await prisma.configuration.findUnique({
+      where: { instanceId: result.instance.id },
+      select: { gatewayToken: true },
+    })
+    const gatewayToken = configRow?.gatewayToken ?? null
+    const headers: Record<string, string> = {}
+    if (gatewayToken) headers['Authorization'] = `Bearer ${gatewayToken}`
     try {
-      const res = await fetch(`${base}/canvas/__openclaw__/canvas/`, {
+      const res = await fetch(`${base}/__openclaw__/canvas/`, {
         signal: AbortSignal.timeout(3000),
+        headers,
       })
       isRunning = res.status < 500
     } catch {

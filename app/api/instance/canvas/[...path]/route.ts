@@ -1,20 +1,19 @@
 import { NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
+import { prisma } from '@/lib/prisma'
 import { getActiveInstance } from '@/lib/get-active-instance'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 /** Inject a WebSocket bridge shim into canvas HTML.
- *  The shim intercepts all WebSocket() calls and redirects them to our
- *  pairing server's /canvas-ws tunnel, which pipes to the gateway at
- *  ws://localhost:18789 inside the container.
+ *  The shim intercepts all WebSocket() calls and redirects them through the
+ *  gateway's canvas WebSocket endpoint.
  */
 function injectBridgeShim(html: string, accessUrl: string): string {
-  const base = accessUrl.replace(/^https?:\/\//, 'wss://')
-  // Routes through pairing server /canvas-ws → gateway challenge-response auth → proxy
-  const wsGateway = base + '/canvas-ws'
+  const wsBase = accessUrl.replace(/^https?:\/\//, 'wss://')
+  const wsGateway = `${wsBase}/__openclaw__/canvas-ws`
   const shim = `<script>
 (function(){
   var PROXY='${wsGateway}';
@@ -46,7 +45,6 @@ function injectBridgeShim(html: string, accessUrl: string): string {
   window.WebSocket=ProxiedWS;
 })();
 </script>`
-  // Inject before </head> if present, otherwise before </body>, otherwise prepend
   if (html.includes('</head>')) return html.replace('</head>', shim + '</head>')
   if (html.includes('</body>')) return html.replace('</body>', shim + '</body>')
   return shim + html
@@ -71,12 +69,25 @@ export async function GET(
     return NextResponse.json({ error: 'No public URL for instance' }, { status: 503 })
   }
 
+  // Fetch the gateway token so we can authenticate against the gateway
+  const configRow = await prisma.configuration.findUnique({
+    where: { instanceId: result.instance.id },
+    select: { gatewayToken: true },
+  })
+  const gatewayToken = configRow?.gatewayToken ?? null
+
+  // Proxy path directly onto the accessUrl — the gateway serves canvas at /__openclaw__/canvas/
+  // e.g. pathStr = "__openclaw__/canvas/" → upstreamUrl = "https://<svc>/__openclaw__/canvas/"
   const pathStr = (params.path ?? []).join('/')
-  const upstreamUrl = `${accessUrl}/canvas/${pathStr}`
+  const upstreamUrl = `${accessUrl}/${pathStr}`
 
   try {
+    const headers: Record<string, string> = {}
+    if (gatewayToken) headers['Authorization'] = `Bearer ${gatewayToken}`
+
     const upstreamRes = await fetch(upstreamUrl, {
       signal: AbortSignal.timeout(10000),
+      headers,
     })
 
     const contentType = upstreamRes.headers.get('Content-Type') ?? 'text/html'
