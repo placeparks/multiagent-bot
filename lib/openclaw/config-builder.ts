@@ -146,10 +146,6 @@ export function generateOpenClawConfig(userConfig: UserConfiguration) {
           ...(userConfig.braveApiKey && { apiKey: userConfig.braveApiKey })
         }
       },
-      sessions: {
-        // Allow coordinator to discover and message specialist sessions across agents.
-        visibility: 'all',
-      },
     }
   }
 
@@ -198,12 +194,6 @@ export function generateOpenClawConfig(userConfig: UserConfiguration) {
     config.tools.agentToAgent = {
       enabled: true,
       allow: specialistIds,
-    }
-
-    // In sandboxed sessions, keep session tools visible across agents.
-    config.agents.defaults.sandbox = {
-      ...(config.agents.defaults.sandbox || {}),
-      sessionToolsVisibility: 'all',
     }
 
     const bindings = userConfig.nativeMultiAgent.agents.flatMap(agent =>
