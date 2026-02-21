@@ -5,13 +5,13 @@ import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
-import { ArrowLeft, Bot, MessageSquare, Zap, Shield, Settings, Link2 } from 'lucide-react'
+import { ArrowLeft, Bot, MessageSquare, Zap, Shield, Settings, Network } from 'lucide-react'
 import { AgentSettings } from '@/components/settings/agent-settings'
 import { ChannelSettings } from '@/components/settings/channel-settings'
 import { SkillsSettings } from '@/components/settings/skills-settings'
 import { SecuritySettings } from '@/components/settings/security-settings'
 import { AdvancedSettings } from '@/components/settings/advanced-settings'
-import { ConnectionsSettings } from '@/components/settings/connections-settings'
+import { MultiAgentSettings } from '@/components/settings/multi-agent-settings'
 
 export default function SettingsPage() {
   const router = useRouter()
@@ -168,9 +168,9 @@ export default function SettingsPage() {
                   <Settings className="h-3 w-3" /> Advanced
                 </span>
               </TabsTrigger>
-              <TabsTrigger value="connections">
+              <TabsTrigger value="multiagent">
                 <span className="flex items-center gap-1.5">
-                  <Link2 className="h-3 w-3" /> Connections
+                  <Network className="h-3 w-3" /> Multi-Agent
                 </span>
               </TabsTrigger>
             </TabsList>
@@ -195,8 +195,8 @@ export default function SettingsPage() {
               <AdvancedSettings config={config} instance={instance} onConfigChange={handleConfigChange} />
             </TabsContent>
 
-            <TabsContent value="connections">
-              <ConnectionsSettings onConfigChange={handleConfigChange} />
+            <TabsContent value="multiagent">
+              <MultiAgentSettings config={config} onConfigChange={handleConfigChange} />
             </TabsContent>
           </Tabs>
         </motion.div>

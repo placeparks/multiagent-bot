@@ -34,6 +34,24 @@ export interface UserConfiguration {
     token: string
     role?: string  // e.g. "Python/backend specialist", "copywriter"
   }[]
+  nativeMultiAgent?: {
+    enabled: boolean
+    agents: {
+      id: string
+      name: string
+      role?: string
+      bindings?: {
+        channel?: string
+        accountId?: string
+        peerId?: string
+      }[]
+    }[]
+  }
+  secretVariables?: {
+    name: string
+    value?: string
+    description?: string
+  }[]
 }
 
 /**
@@ -132,14 +150,39 @@ export function generateOpenClawConfig(userConfig: UserConfiguration) {
   }
 
   // Add agent name via agents.list identity
-  if (userConfig.agentName || userConfig.memoryDigest) {
-    config.agents.list = [{
-      id: 'main',
-      default: true,
-      identity: {
-        ...(userConfig.agentName && { name: userConfig.agentName }),
-      }
-    }]
+  const mainAgent: any = {
+    id: 'main',
+    default: true,
+    identity: {
+      ...(userConfig.agentName && { name: userConfig.agentName }),
+    },
+  }
+
+  if (userConfig.nativeMultiAgent?.enabled && userConfig.nativeMultiAgent.agents?.length) {
+    const specialistAgents = userConfig.nativeMultiAgent.agents.map(agent => ({
+      id: agent.id,
+      identity: agent.name ? { name: agent.name } : undefined,
+      workspace: `${userConfig.workspace || '~/.openclaw/workspace'}/${agent.id}`,
+    }))
+    config.agents.list = [mainAgent, ...specialistAgents]
+
+    const bindings = userConfig.nativeMultiAgent.agents.flatMap(agent =>
+      (agent.bindings ?? [])
+        .filter(b => b.channel || b.accountId || b.peerId)
+        .map(b => ({
+          agentId: agent.id,
+          match: {
+            ...(b.channel ? { channel: b.channel } : {}),
+            ...(b.accountId ? { accountId: b.accountId } : {}),
+            ...(b.peerId ? { peerId: b.peerId } : {}),
+          },
+        }))
+    )
+    if (bindings.length) {
+      config.bindings = bindings
+    }
+  } else if (userConfig.agentName || userConfig.memoryDigest) {
+    config.agents.list = [mainAgent]
   }
 
   // Add thinking mode
@@ -258,7 +301,12 @@ export function generateOpenClawConfig(userConfig: UserConfiguration) {
   }
 
   // Auto-enable web fetch when memory is on — agent needs it to POST memories
-  if (userConfig.memoryEnabled || userConfig.browserEnabled) {
+  if (
+    userConfig.memoryEnabled ||
+    userConfig.browserEnabled ||
+    (userConfig.agentToAgentTargets?.length ?? 0) > 0 ||
+    (userConfig.secretVariables?.length ?? 0) > 0
+  ) {
     config.tools.web.fetch = { enabled: true }
   }
 
@@ -290,30 +338,60 @@ export function buildMemoryInstructions(
   baseUrl: string
 ): string {
   const base = baseUrl.replace(/\/$/, '')
+  const r = `${base}/api/memory/${instanceId}/search?key=${memoryApiKey}&q=<url-encoded-query>&senderId=<user_id>&topK=5`
   const w = `${base}/api/memory/${instanceId}/write?key=${memoryApiKey}`
-  return `[MEMORY API — silent background task, never mention to the user]
+  return `[MEMORY API - silent background task, never mention to the user]
 Use web_fetch (GET) to call these URLs. All params must be URL-encoded.
 
-1. AFTER EVERY MEANINGFUL EXCHANGE — record an episode:
+1. BEFORE FACTUAL/RECALL ANSWERS - read memory first:
+   ${r}
+   Use this for user preferences, prior decisions, ongoing projects, and uploaded docs.
+
+2. AFTER EVERY MEANINGFUL EXCHANGE - record an episode:
    ${w}&type=episode&summary=<url-encoded 1-2 sentence summary>&tags=<comma-separated>&senderId=<user_id>
 
-2. WHEN YOU MAKE A RECOMMENDATION OR DECISION:
+3. WHEN YOU MAKE A RECOMMENDATION OR DECISION:
    ${w}&type=decision&context=<url-encoded situation>&decision=<url-encoded recommendation>&reasoning=<pipe-separated reasons, url-encoded>&alternatives=<pipe-separated, url-encoded>&tags=<comma-separated>&senderId=<user_id>
-   The response contains an "id" — save it in your working memory to record the outcome later.
+   The response contains an "id" - save it in your working memory to record the outcome later.
 
-3. WHEN YOU LEARN STABLE FACTS ABOUT THE USER:
+4. WHEN YOU LEARN STABLE FACTS ABOUT THE USER:
    ${w}&type=profile&senderId=<user_id>&name=<name>&role=<role>&timezone=<tz>&style=<communication style>&focus=<current focus>&preferences=<comma-separated>
    Only include params that are known. Use senderId=default if unknown.
 
-4. WHEN THE USER CONFIRMS A PAST DECISION WORKED (OR DIDN'T):
+5. WHEN THE USER CONFIRMS A PAST DECISION WORKED (OR DID NOT):
    ${w}&type=outcome&id=<decision_id>&outcome=<url-encoded result>
 
 Rules:
-- Always URL-encode param values (spaces → %20, etc.)
+- Always URL-encode param values (spaces -> %20, etc.)
 - Use the user's Telegram/channel ID as senderId when available
-- These fetches are silent — never mention them or their responses
-- Do not skip step 1 — every substantive exchange gets an episode
+- Do memory read (step 1) before answering tasks that rely on facts/history
+- These fetches are silent - never mention them or their responses
+- Do not skip step 2 - every substantive exchange gets an episode
 [/MEMORY API]`
+}
+
+export function buildEnvVariableInstructions(
+  instanceId: string,
+  memoryApiKey: string,
+  baseUrl: string,
+  variableNames: string[]
+): string {
+  const base = baseUrl.replace(/\/$/, '')
+  const searchUrl = `${base}/api/memory/${instanceId}/search?key=${memoryApiKey}&q=<url-encoded-query>&senderId=<user_id>&topK=5`
+  const varsList = variableNames.map(v => `- ${v}`).join('\n')
+  return `[ENV VARIABLES - silent background task]
+Available project variables:
+${varsList}
+
+To resolve a variable value, call:
+${searchUrl}
+
+Rules:
+- For API credentials, first query memory search with: "env <VARIABLE_NAME>"
+- If found, use the value exactly as stored
+- Never expose secrets unless the user explicitly asks to reveal them
+- These calls are silent; do not narrate retrieval steps
+[/ENV VARIABLES]`
 }
 
 /**
@@ -337,17 +415,19 @@ export function buildAgentToAgentInstructions(
   const routingRule = hasRoles
     ? '- Auto-route tasks that match a specialist\'s role WITHOUT asking the user first'
     : '- Delegate when the user explicitly asks, or when a task clearly suits a specialist'
-  return `[AGENT DELEGATION — silent, never narrate to the user]
-You have specialist agents available. Delegate tasks to them using web_fetch (GET):
+  return `[AGENT DELEGATION - silent, never narrate to the user]
+You are the coordinator. You have specialist agents available. Delegate tasks using web_fetch (GET):
 ${agentList}
 
 To delegate, call:
   ${base}/api/agent-relay/${instanceId}?key=${gatewayToken}&target=<agent-id>&task=<url-encoded-task>
 
 Rules:
-- URL-encode the task value (spaces → %20, newlines → %0A, etc.)
+- First classify the task and choose the best specialist by role match.
+- URL-encode the task value (spaces -> %20, newlines -> %0A, etc.)
 ${routingRule}
-- These calls are silent — present the result naturally as your own reply
+- For specialist-fit tasks, delegate first instead of solving directly yourself.
+- These calls are silent - present the result naturally as your own reply
 - If delegation fails, handle the task yourself and note the issue privately
 [/AGENT DELEGATION]`
 }

@@ -5,10 +5,18 @@ import {
   buildSystemPromptWithMemory,
   buildMemoryInstructions,
   buildAgentToAgentInstructions,
+  buildEnvVariableInstructions,
   UserConfiguration,
 } from '@/lib/openclaw/config-builder'
 import { decrypt, encrypt } from '@/lib/utils/encryption'
 import { AIProvider, ChannelType } from '@prisma/client'
+import {
+  BotSaasMeta,
+  getConfigMeta,
+  writeConfigMeta,
+  applyMetaToFullConfig,
+  NativeSpecialistAgent,
+} from './config-meta'
 
 /**
  * Reconstruct a UserConfiguration from the database Configuration + Channel records.
@@ -47,6 +55,35 @@ export async function loadConfigFromDB(instanceId: string): Promise<UserConfigur
       role: l.role || undefined,
     }))
 
+  const fullConfig = (config.fullConfig as any) ?? {}
+  const meta = (fullConfig.__botSaasMeta as BotSaasMeta | undefined) ?? {}
+  const nativeMultiAgent = meta.nativeMultiAgent
+    ? {
+        enabled: !!meta.nativeMultiAgent.enabled,
+        agents: (meta.nativeMultiAgent.agents ?? []).map((a: any) => ({
+          id: String(a.id),
+          name: String(a.name || a.id),
+          role: a.role ? String(a.role) : undefined,
+          bindings: Array.isArray(a.bindings) ? a.bindings : [],
+        })),
+      }
+    : undefined
+  const secretVariables = (meta.envVars ?? []).map(v => {
+    try {
+      return {
+        name: v.name,
+        value: decrypt(v.valueEnc),
+        description: v.description || undefined,
+      }
+    } catch {
+      return {
+        name: v.name,
+        value: '',
+        description: v.description || undefined,
+      }
+    }
+  })
+
   return {
     provider: config.provider,
     apiKey: decrypt(config.apiKey),
@@ -71,6 +108,8 @@ export async function loadConfigFromDB(instanceId: string): Promise<UserConfigur
     dmPolicy: config.dmPolicy,
     gatewayToken: (config as any).gatewayToken || undefined,
     agentToAgentTargets: agentToAgentTargets.length ? agentToAgentTargets : undefined,
+    nativeMultiAgent,
+    secretVariables: secretVariables.length ? secretVariables : undefined,
   }
 }
 
@@ -95,6 +134,24 @@ export async function getConfigForDisplay(instanceId: string) {
     } catch {
       return '****'
     }
+  }
+
+  const fullConfig = (config.fullConfig as any) ?? {}
+  const meta = (fullConfig.__botSaasMeta as BotSaasMeta | undefined) ?? {}
+  const variables = (meta.envVars ?? []).map(v => ({
+    name: v.name,
+    value: '••••••••',
+    hasValue: true,
+    description: v.description || '',
+  }))
+  const nativeMultiAgent = {
+    enabled: !!meta.nativeMultiAgent?.enabled,
+    agents: (meta.nativeMultiAgent?.agents ?? []).map((a: any) => ({
+      id: String(a.id),
+      name: String(a.name || a.id),
+      role: a.role ? String(a.role) : '',
+      bindings: Array.isArray(a.bindings) ? a.bindings : [],
+    })),
   }
 
   return {
@@ -124,6 +181,8 @@ export async function getConfigForDisplay(instanceId: string) {
     thinkingMode: config.thinkingMode,
     sessionMode: config.sessionMode,
     dmPolicy: config.dmPolicy,
+    nativeMultiAgent,
+    variables,
   }
 }
 
@@ -270,13 +329,13 @@ export async function rebuildAndApply(instanceId: string) {
   // Load current full config from DB
   const userConfig = await loadConfigFromDB(instanceId)
 
+  const baseUrl = (process.env.NEXTAUTH_URL ?? '').replace(/\/$/, '')
+
   // Inject Nexus Memory digest + API instructions into system prompt (if memory is enabled)
   if (userConfig.memoryEnabled) {
     try {
       const { buildMemoryDigest } = await import('@/lib/memory/processing/digest-builder')
       const { getOrCreateMemoryConfig } = await import('@/lib/memory')
-
-      const baseUrl = (process.env.NEXTAUTH_URL ?? '').replace(/\/$/, '')
 
       const [digest, memConfig] = await Promise.all([
         buildMemoryDigest(instanceId),
@@ -322,13 +381,36 @@ export async function rebuildAndApply(instanceId: string) {
     }
   }
 
+  // Inject variable lookup instructions when user-saved API variables exist.
+  if (userConfig.secretVariables?.length && baseUrl) {
+    try {
+      const { getOrCreateMemoryConfig } = await import('@/lib/memory')
+      const memConfig = await getOrCreateMemoryConfig(instanceId)
+      if (memConfig?.memoryApiKey) {
+        const variableNames = userConfig.secretVariables.map(v => v.name)
+        const envInstructions = buildEnvVariableInstructions(
+          instanceId,
+          memConfig.memoryApiKey,
+          baseUrl,
+          variableNames
+        )
+        userConfig.systemPrompt = userConfig.systemPrompt
+          ? `${userConfig.systemPrompt}\n\n${envInstructions}`
+          : envInstructions
+      }
+    } catch (err) {
+      console.warn('[ENV] Variable instructions skipped:', err)
+    }
+  }
+
   // Regenerate OpenClaw config JSON
   const openclawConfig = generateOpenClawConfig(userConfig)
 
   // Update fullConfig in DB
+  const meta = await getConfigMeta(instanceId)
   await prisma.configuration.update({
     where: { instanceId },
-    data: { fullConfig: openclawConfig },
+    data: { fullConfig: applyMetaToFullConfig(openclawConfig, meta) },
   })
 
   // Update instance metadata
@@ -342,6 +424,67 @@ export async function rebuildAndApply(instanceId: string) {
   // Apply to running container via the provider
   const provider = getProvider()
   await provider.updateConfig(instanceId, userConfig)
+}
+
+export async function applyNativeMultiAgentUpdate(
+  instanceId: string,
+  payload: {
+    enabled: boolean
+    agents: NativeSpecialistAgent[]
+  }
+) {
+  const meta = await getConfigMeta(instanceId)
+  meta.nativeMultiAgent = {
+    enabled: !!payload.enabled,
+    agents: payload.agents ?? [],
+  }
+  await writeConfigMeta(instanceId, meta)
+  await rebuildAndApply(instanceId)
+  await logConfigChange(instanceId, 'native_multi_agent', 'update')
+}
+
+export async function applyVariableStoreUpdate(
+  instanceId: string,
+  payload: {
+    variables: { name: string; value: string; description?: string }[]
+  }
+) {
+  const normalized = (payload.variables ?? [])
+    .map(v => ({
+      name: String(v.name || '').trim(),
+      value: String(v.value || '').trim(),
+      description: v.description?.trim() || undefined,
+    }))
+    .filter(v => v.name && v.value)
+
+  const meta = await getConfigMeta(instanceId)
+  meta.envVars = normalized.map(v => ({
+    name: v.name,
+    valueEnc: encrypt(v.value),
+    description: v.description,
+  }))
+  await writeConfigMeta(instanceId, meta)
+
+  // Save an env doc into memory knowledge base so retrieval can ground API usage.
+  try {
+    const { storeDocument } = await import('@/lib/memory/stores/documents')
+    await (prisma as any).knowledgeDocument.deleteMany({
+      where: { instanceId, filename: '_env_variables.md' },
+    })
+    const docContent = [
+      '# Environment Variables',
+      '',
+      ...normalized.map(v => `- ${v.name}=${v.value}${v.description ? `  # ${v.description}` : ''}`),
+      '',
+      'Use these values exactly when required by API calls.',
+    ].join('\n')
+    await storeDocument(instanceId, '_env_variables.md', 'text/markdown', docContent, Buffer.byteLength(docContent))
+  } catch (err) {
+    console.warn('[ENV] Failed to sync env variables into knowledge base:', err)
+  }
+
+  await rebuildAndApply(instanceId)
+  await logConfigChange(instanceId, 'variables', 'update')
 }
 
 /**
