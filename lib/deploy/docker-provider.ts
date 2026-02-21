@@ -291,18 +291,18 @@ export class DockerProvider implements DeploymentProvider {
     }
   }
 
-  /** Ensure host directories exist for a user. */
-  private ensureDirectories(userId: string): { configDir: string; dataDir: string } {
-    const configDir = path.join(DATA_DIR, userId, 'config')
-    const dataDir = path.join(DATA_DIR, userId, 'data')
+  /** Ensure host directories exist for an instance. */
+  private ensureDirectories(instanceId: string): { configDir: string; dataDir: string } {
+    const configDir = path.join(DATA_DIR, 'instances', instanceId, 'config')
+    const dataDir = path.join(DATA_DIR, 'instances', instanceId, 'data')
     fs.mkdirSync(configDir, { recursive: true })
     fs.mkdirSync(dataDir, { recursive: true })
     return { configDir, dataDir }
   }
 
   /** Write OpenClaw config JSON to host filesystem. */
-  private writeConfigFile(userId: string, config: object): string {
-    const configDir = path.join(DATA_DIR, userId, 'config')
+  private writeConfigFile(instanceId: string, config: object): string {
+    const configDir = path.join(DATA_DIR, 'instances', instanceId, 'config')
     fs.mkdirSync(configDir, { recursive: true })
     const configPath = path.join(configDir, 'openclaw.json')
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2))
@@ -319,22 +319,11 @@ export class DockerProvider implements DeploymentProvider {
   }
 
   async deploy(userId: string, config: UserConfiguration): Promise<DeploymentResult> {
-    const containerName = `openclaw-${userId}`
+    // Use a unique ID per deployment so multiple agents per user don't conflict
+    const shortId = randomUUID().slice(0, 8)
+    const containerName = `openclaw-${shortId}`
 
-    // Clean up existing
-    const existing = await prisma.instance.findFirst({ where: { userId }, orderBy: { createdAt: 'asc' } })
-    if (existing) {
-      try {
-        const container = this.docker.getContainer(existing.containerName)
-        await container.stop({ t: 5 }).catch(() => {})
-        await container.remove({ force: true }).catch(() => {})
-        await prisma.instance.delete({ where: { id: existing.id } })
-      } catch (err) {
-        console.warn('Cleanup error (continuing):', err)
-      }
-    }
-
-    // Also try to remove any orphaned container
+    // Clean up any orphaned container with this specific name (failure recovery only)
     try {
       const orphan = this.docker.getContainer(containerName)
       await orphan.stop({ t: 5 }).catch(() => {})
@@ -357,13 +346,13 @@ export class DockerProvider implements DeploymentProvider {
 
     try {
       await this.ensureNetwork()
-      const { configDir, dataDir } = this.ensureDirectories(userId)
+      const { configDir, dataDir } = this.ensureDirectories(instance.id)
       const pairingScriptPath = this.ensurePairingServer()
 
       // Build config
       const gatewayToken = randomUUID()
       const openclawConfig = generateOpenClawConfig({ ...config, gatewayToken })
-      this.writeConfigFile(userId, openclawConfig)
+      this.writeConfigFile(instance.id, openclawConfig)
 
       // Build env vars
       const envVars = buildEnvironmentVariables(config)
@@ -470,9 +459,9 @@ export class DockerProvider implements DeploymentProvider {
     await container.stop({ t: 5 }).catch(() => {})
     await container.remove({ force: true })
 
-    // Clean up host files
-    const userDir = path.join(DATA_DIR, instance.userId)
-    fs.rmSync(userDir, { recursive: true, force: true })
+    // Clean up host files for this instance
+    const instanceDir = path.join(DATA_DIR, 'instances', instanceId)
+    fs.rmSync(instanceDir, { recursive: true, force: true })
 
     await prisma.instance.delete({ where: { id: instanceId } })
     await this.logDeployment(instanceId, 'DESTROY', 'SUCCESS', 'Instance destroyed')
@@ -516,7 +505,7 @@ export class DockerProvider implements DeploymentProvider {
     // Regenerate config and write to host filesystem
     const gatewayToken = config.gatewayToken || randomUUID()
     const openclawConfig = generateOpenClawConfig({ ...config, gatewayToken })
-    this.writeConfigFile(instance.userId, openclawConfig)
+    this.writeConfigFile(instanceId, openclawConfig)
 
     // Restart container to pick up new config (config is mounted as volume)
     const container = this.docker.getContainer(instance.containerName)

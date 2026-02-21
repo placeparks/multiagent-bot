@@ -55,20 +55,11 @@ export class RailwayProvider implements DeploymentProvider {
 
   async deploy(userId: string, config: UserConfiguration): Promise<DeploymentResult> {
     const railway = new RailwayClient()
-    const serviceName = `openclaw-${userId}`
+    // Use a unique ID per deployment so multiple agents per user don't conflict
+    const shortId = randomUUID().slice(0, 8)
+    const serviceName = `openclaw-${shortId}`
 
-    // Clean up any existing instance
-    const existing = await prisma.instance.findFirst({ where: { userId }, orderBy: { createdAt: 'asc' } })
-    if (existing) {
-      try {
-        if (existing.containerId) await railway.deleteService(existing.containerId)
-        await prisma.instance.delete({ where: { id: existing.id } })
-      } catch (err) {
-        console.warn('Cleanup error (continuing):', err)
-      }
-    }
-
-    // Clean up orphaned Railway service by name
+    // Clean up any orphaned Railway service with this specific name (failure recovery only)
     try {
       const orphanedServiceId = await railway.findServiceByName(serviceName)
       if (orphanedServiceId) {
