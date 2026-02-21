@@ -330,7 +330,7 @@ export async function rebuildAndApply(instanceId: string) {
   // Load current full config from DB
   const userConfig = await loadConfigFromDB(instanceId)
 
-  const baseUrl = (process.env.NEXTAUTH_URL ?? '').replace(/\/$/, '')
+  const baseUrl = (process.env.INTERNAL_APP_URL || process.env.NEXTAUTH_URL || '').replace(/\/$/, '')
 
   // Inject Nexus Memory digest + API instructions into system prompt (if memory is enabled)
   if (userConfig.memoryEnabled) {
@@ -365,7 +365,6 @@ export async function rebuildAndApply(instanceId: string) {
   // Inject legacy cross-instance delegation instructions (if configured and native orchestration is off)
   if (!userConfig.nativeMultiAgent?.enabled && userConfig.agentToAgentTargets?.length && userConfig.gatewayToken) {
     try {
-      const baseUrl = (process.env.NEXTAUTH_URL ?? '').replace(/\/$/, '')
       if (baseUrl) {
         const a2aInstructions = buildAgentToAgentInstructions(
           instanceId,

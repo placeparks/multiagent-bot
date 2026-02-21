@@ -176,6 +176,13 @@ export function generateOpenClawConfig(userConfig: UserConfiguration) {
   }
 
   if (userConfig.nativeMultiAgent?.enabled && userConfig.nativeMultiAgent.agents?.length) {
+    const specialistIds = userConfig.nativeMultiAgent.agents.map(a => a.id)
+    // OpenClaw checks per-agent subagents.allowAgents for cross-agent sessions_spawn.
+    // Without this, main can only spawn itself and delegation is denied.
+    mainAgent.subagents = {
+      allowAgents: specialistIds,
+    }
+
     const specialistAgents = userConfig.nativeMultiAgent.agents.map(agent => ({
       id: agent.id,
       identity: agent.name ? { name: agent.name } : undefined,
@@ -184,7 +191,6 @@ export function generateOpenClawConfig(userConfig: UserConfiguration) {
     config.agents.list = [mainAgent, ...specialistAgents]
 
     // Enable native agent-to-agent so coordinator can delegate to allowed specialists.
-    const specialistIds = userConfig.nativeMultiAgent.agents.map(a => a.id)
     config.tools.agentToAgent = {
       enabled: true,
       allow: specialistIds,
