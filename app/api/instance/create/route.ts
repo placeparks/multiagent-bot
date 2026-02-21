@@ -107,8 +107,12 @@ export async function POST(req: Request) {
   // --- Resolve model ---
   const finalModel: string = reqModel || baseConfig.model || getDefaultModel(finalProvider)
 
-  // --- Resolve channels ---
-  const channelsList = reqChannels && reqChannels.length > 0 ? reqChannels : []
+  // --- Resolve channels (cast type string → ChannelType for type safety) ---
+  const validChannelTypes = new Set<string>(Object.values(ChannelType))
+  const channelsList: { type: ChannelType; config: Record<string, any> }[] =
+    (reqChannels ?? [])
+      .filter(ch => validChannelTypes.has(ch.type))
+      .map(ch => ({ type: ch.type as ChannelType, config: ch.config ?? {} }))
 
   // --- Resolve skills ---
   const webSearchEnabled: boolean = body.webSearchEnabled ?? false
@@ -165,20 +169,16 @@ export async function POST(req: Request) {
       },
     })
 
-    // Save channels if provided
+    // Save channels if provided (already filtered to valid ChannelType values)
     if (channelsList.length > 0) {
-      const validChannelTypes = Object.values(ChannelType) as string[]
-      const validChannels = channelsList.filter(ch => validChannelTypes.includes(ch.type))
-      if (validChannels.length > 0) {
-        await prisma.channel.createMany({
-          data: validChannels.map(ch => ({
-            configId: configRecord.id,
-            type: ch.type as ChannelType,
-            enabled: true,
-            config: ch.config ?? {},
-          })),
-        })
-      }
+      await prisma.channel.createMany({
+        data: channelsList.map(ch => ({
+          configId: configRecord.id,
+          type: ch.type,
+          enabled: true,
+          config: ch.config,
+        })),
+      })
     }
 
     // Update the instance name
