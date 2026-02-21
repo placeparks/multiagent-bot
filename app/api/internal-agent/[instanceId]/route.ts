@@ -42,35 +42,79 @@ export async function GET(
 
   const gatewayUrl = `${instance.serviceUrl}/v1/chat/completions`
   try {
-    const res = await fetch(gatewayUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${sourceConfig.gatewayToken}`,
+    const attempts: Array<{
+      name: string
+      headers?: Record<string, string>
+      body: Record<string, any>
+    }> = [
+      {
+        name: 'model-openclaw-agentid + header',
+        headers: { 'x-openclaw-agent-id': agentId },
+        body: {
+          model: `openclaw:${agentId}`,
+          user: `orchestrator:${instanceId}`,
+          messages: [{ role: 'user', content: task }],
+        },
       },
-      body: JSON.stringify({
-        model: 'default',
-        // Try common agent-targeting fields supported by multi-agent gateways.
-        agentId,
-        metadata: { agentId },
-        messages: [{ role: 'user', content: task }],
-      }),
-      signal: AbortSignal.timeout(60_000),
-    })
+      {
+        name: 'model-openclaw + header',
+        headers: { 'x-openclaw-agent-id': agentId },
+        body: {
+          model: 'openclaw',
+          user: `orchestrator:${instanceId}`,
+          messages: [{ role: 'user', content: task }],
+        },
+      },
+      {
+        name: 'model-agent-alias',
+        body: {
+          model: `agent:${agentId}`,
+          user: `orchestrator:${instanceId}`,
+          messages: [{ role: 'user', content: task }],
+        },
+      },
+      {
+        name: 'legacy-default + metadata',
+        body: {
+          model: 'default',
+          user: `orchestrator:${instanceId}`,
+          metadata: { agentId },
+          messages: [{ role: 'user', content: task }],
+        },
+      },
+    ]
 
-    if (!res.ok) {
+    const errors: string[] = []
+    for (const attempt of attempts) {
+      const res = await fetch(gatewayUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${sourceConfig.gatewayToken}`,
+          ...(attempt.headers ?? {}),
+        },
+        body: JSON.stringify(attempt.body),
+        signal: AbortSignal.timeout(60_000),
+      })
+
+      if (res.ok) {
+        const data = await res.json()
+        const content = data?.choices?.[0]?.message?.content ?? JSON.stringify(data)
+        return new Response(content, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } })
+      }
+
       const errText = await res.text()
-      return NextResponse.json(
-        { error: `Internal agent call failed (${res.status}): ${errText.slice(0, 240)}` },
-        { status: 502 }
-      )
+      errors.push(`${attempt.name}: ${res.status} ${errText.slice(0, 180)}`)
     }
 
-    const data = await res.json()
-    const content = data?.choices?.[0]?.message?.content ?? JSON.stringify(data)
-    return new Response(content, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } })
+    return NextResponse.json(
+      {
+        error: 'Internal agent call failed for all request formats',
+        details: errors,
+      },
+      { status: 502 }
+    )
   } catch (err: any) {
     return NextResponse.json({ error: `Internal agent relay error: ${err.message}` }, { status: 502 })
   }
 }
-
