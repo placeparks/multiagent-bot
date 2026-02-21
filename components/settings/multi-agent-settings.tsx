@@ -16,9 +16,6 @@ interface SpecialistAgent {
   id: string
   name: string
   role: string
-  channel: string
-  accountId: string
-  peerId: string
 }
 
 interface EnvVariable {
@@ -42,9 +39,6 @@ export function MultiAgentSettings({ config, onConfigChange }: MultiAgentSetting
         id: a.id ?? '',
         name: a.name ?? '',
         role: a.role ?? '',
-        channel: a.bindings?.[0]?.channel ?? '',
-        accountId: a.bindings?.[0]?.accountId ?? '',
-        peerId: a.bindings?.[0]?.peerId ?? '',
       }))
     )
     setVariables(
@@ -57,7 +51,7 @@ export function MultiAgentSettings({ config, onConfigChange }: MultiAgentSetting
   }, [config])
 
   const addAgent = () => {
-    setAgents(prev => [...prev, { id: '', name: '', role: '', channel: '', accountId: '', peerId: '' }])
+    setAgents(prev => [...prev, { id: '', name: '', role: '' }])
   }
 
   const removeAgent = (idx: number) => {
@@ -91,16 +85,6 @@ export function MultiAgentSettings({ config, onConfigChange }: MultiAgentSetting
             id: a.id.trim(),
             name: a.name.trim(),
             role: a.role.trim() || undefined,
-            bindings:
-              a.channel.trim() || a.accountId.trim() || a.peerId.trim()
-                ? [
-                    {
-                      channel: a.channel.trim() || undefined,
-                      accountId: a.accountId.trim() || undefined,
-                      peerId: a.peerId.trim() || undefined,
-                    },
-                  ]
-                : [],
           })),
       }
       const res = await fetch('/api/instance/config/multi-agent', {
@@ -168,9 +152,6 @@ export function MultiAgentSettings({ config, onConfigChange }: MultiAgentSetting
                   <Input value={agent.id} onChange={e => updateAgent(idx, 'id', e.target.value)} placeholder="agent id (e.g. dev)" className="h-8 text-xs" />
                   <Input value={agent.name} onChange={e => updateAgent(idx, 'name', e.target.value)} placeholder="display name" className="h-8 text-xs" />
                   <Input value={agent.role} onChange={e => updateAgent(idx, 'role', e.target.value)} placeholder="role (e.g. backend specialist)" className="h-8 text-xs sm:col-span-2" />
-                  <Input value={agent.channel} onChange={e => updateAgent(idx, 'channel', e.target.value)} placeholder="binding channel (optional)" className="h-8 text-xs" />
-                  <Input value={agent.accountId} onChange={e => updateAgent(idx, 'accountId', e.target.value)} placeholder="binding accountId (optional)" className="h-8 text-xs" />
-                  <Input value={agent.peerId} onChange={e => updateAgent(idx, 'peerId', e.target.value)} placeholder="binding peerId (optional)" className="h-8 text-xs sm:col-span-2" />
                 </div>
                 <Button type="button" size="sm" variant="ghost" onClick={() => removeAgent(idx)} className="h-7 text-xs text-red-400 hover:text-red-300">
                   <Trash2 className="h-3 w-3 mr-1" />
@@ -233,4 +214,3 @@ export function MultiAgentSettings({ config, onConfigChange }: MultiAgentSetting
     </div>
   )
 }
-
