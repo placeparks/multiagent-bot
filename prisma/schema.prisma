@@ -80,6 +80,10 @@ model Instance {
 
   config        Configuration?
 
+  // Agent-to-agent connections
+  outgoingLinks  AgentLink[]    @relation("SourceLinks")
+  incomingLinks  AgentLink[]    @relation("TargetLinks")
+
   createdAt     DateTime        @default(now())
   updatedAt     DateTime        @updatedAt
   lastHealthCheck DateTime?
@@ -346,4 +350,18 @@ model MemoryConfig {
   updatedAt      DateTime @updatedAt
 
   @@map("memory_configs")
+}
+
+// Directed link allowing one agent to delegate tasks to another via tools.agentToAgent
+model AgentLink {
+  id               String   @id @default(cuid())
+  sourceInstanceId String
+  targetInstanceId String
+  createdAt        DateTime @default(now())
+
+  sourceInstance   Instance @relation("SourceLinks", fields: [sourceInstanceId], references: [id], onDelete: Cascade)
+  targetInstance   Instance @relation("TargetLinks", fields: [targetInstanceId], references: [id], onDelete: Cascade)
+
+  @@unique([sourceInstanceId, targetInstanceId])
+  @@map("agent_links")
 }

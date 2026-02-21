@@ -26,6 +26,13 @@ export interface UserConfiguration {
   gatewayToken?: string
   // Nexus Memory — injected digest (built server-side)
   memoryDigest?: string
+  // Agent-to-agent: other agents this one can delegate tasks to
+  agentToAgentTargets?: {
+    id: string
+    name: string
+    gatewayUrl: string
+    token: string
+  }[]
 }
 
 /**
@@ -234,6 +241,19 @@ export function generateOpenClawConfig(userConfig: UserConfiguration) {
   // NOTE: We do NOT enable OpenClaw's internal memorySearch when Nexus Memory is on.
   // OpenClaw's memorySearch requires git to commit workspace files, which fails in Railway
   // containers (no git author configured). Nexus Memory uses web_fetch + our REST API instead.
+
+  // Agent-to-agent → tools.agentToAgent
+  if (userConfig.agentToAgentTargets?.length) {
+    config.tools.agentToAgent = {
+      enabled: true,
+      agents: userConfig.agentToAgentTargets.map(t => ({
+        id: t.id,
+        name: t.name,
+        gatewayUrl: t.gatewayUrl,
+        token: t.token,
+      })),
+    }
+  }
 
   // Canvas → top-level canvasHost (not tools.canvas)
   if (userConfig.canvasEnabled) {

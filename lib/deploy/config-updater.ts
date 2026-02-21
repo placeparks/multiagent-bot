@@ -21,6 +21,30 @@ export async function loadConfigFromDB(instanceId: string): Promise<UserConfigur
 
   if (!config) throw new Error('Configuration not found for instance')
 
+  // Load agent-to-agent targets: instances this agent is linked to
+  const links = await (prisma as any).agentLink.findMany({
+    where: { sourceInstanceId: instanceId },
+    include: {
+      targetInstance: {
+        select: {
+          id: true,
+          name: true,
+          serviceUrl: true,
+          config: { select: { gatewayToken: true } },
+        },
+      },
+    },
+  })
+
+  const agentToAgentTargets = links
+    .filter((l: any) => l.targetInstance?.serviceUrl && l.targetInstance?.config?.gatewayToken)
+    .map((l: any) => ({
+      id: l.targetInstance.id,
+      name: l.targetInstance.name || 'Agent',
+      gatewayUrl: l.targetInstance.serviceUrl,
+      token: l.targetInstance.config.gatewayToken,
+    }))
+
   return {
     provider: config.provider,
     apiKey: decrypt(config.apiKey),
@@ -44,6 +68,7 @@ export async function loadConfigFromDB(instanceId: string): Promise<UserConfigur
     sessionMode: config.sessionMode,
     dmPolicy: config.dmPolicy,
     gatewayToken: (config as any).gatewayToken || undefined,
+    agentToAgentTargets: agentToAgentTargets.length ? agentToAgentTargets : undefined,
   }
 }
 
@@ -295,6 +320,30 @@ export async function rebuildAndApply(instanceId: string) {
   // Apply to running container via the provider
   const provider = getProvider()
   await provider.updateConfig(instanceId, userConfig)
+}
+
+/**
+ * Add or remove an agent-to-agent link and redeploy.
+ */
+export async function applyConnectionsUpdate(
+  sourceInstanceId: string,
+  targetInstanceId: string,
+  action: 'add' | 'remove'
+) {
+  if (action === 'add') {
+    await (prisma as any).agentLink.upsert({
+      where: { sourceInstanceId_targetInstanceId: { sourceInstanceId, targetInstanceId } },
+      create: { sourceInstanceId, targetInstanceId, id: require('crypto').randomUUID() },
+      update: {},
+    })
+  } else {
+    await (prisma as any).agentLink.deleteMany({
+      where: { sourceInstanceId, targetInstanceId },
+    })
+  }
+
+  await rebuildAndApply(sourceInstanceId)
+  await logConfigChange(sourceInstanceId, 'connections', action)
 }
 
 /** Log a config change (best-effort — table may not exist until migration runs). */
