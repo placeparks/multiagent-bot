@@ -158,6 +158,23 @@ export function generateOpenClawConfig(userConfig: UserConfiguration) {
     },
   }
 
+  const toPeerMatch = (channel: string | undefined, peerId: string | undefined) => {
+    if (!peerId) return undefined
+    const normalized = String(peerId).trim()
+    if (!normalized) return undefined
+
+    // Telegram group ids are usually negative (-100...), DMs are positive numeric.
+    const inferredKind =
+      channel === 'telegram' && normalized.startsWith('-')
+        ? 'group'
+        : 'direct'
+
+    return {
+      kind: inferredKind,
+      id: normalized,
+    }
+  }
+
   if (userConfig.nativeMultiAgent?.enabled && userConfig.nativeMultiAgent.agents?.length) {
     const specialistAgents = userConfig.nativeMultiAgent.agents.map(agent => ({
       id: agent.id,
@@ -174,7 +191,7 @@ export function generateOpenClawConfig(userConfig: UserConfiguration) {
           match: {
             ...(b.channel ? { channel: b.channel } : {}),
             ...(b.accountId ? { accountId: b.accountId } : {}),
-            ...(b.peerId ? { peerId: b.peerId } : {}),
+            ...(toPeerMatch(b.channel, b.peerId) ? { peer: toPeerMatch(b.channel, b.peerId) } : {}),
           },
         }))
     )
