@@ -89,6 +89,7 @@ export class RailwayProvider implements DeploymentProvider {
       envVars.PORT = '18800'
       const gatewayToken = config.gatewayToken || randomUUID()
       envVars.OPENCLAW_GATEWAY_TOKEN = gatewayToken
+      envVars.OPENCLAW_AUTO_UPDATE = '1'
       const openclawConfig = generateOpenClawConfig({ ...config, gatewayToken })
       envVars.OPENCLAW_CONFIG = JSON.stringify(openclawConfig)
       envVars._PAIRING_SCRIPT_B64 = PAIRING_SCRIPT_B64
@@ -251,6 +252,7 @@ export class RailwayProvider implements DeploymentProvider {
     envVars.PORT = '18800'
     const gatewayToken = config.gatewayToken || randomUUID()
     envVars.OPENCLAW_GATEWAY_TOKEN = gatewayToken
+    envVars.OPENCLAW_AUTO_UPDATE = '1'
     const openclawConfig = generateOpenClawConfig({ ...config, gatewayToken })
     envVars.OPENCLAW_CONFIG = JSON.stringify(openclawConfig)
     envVars._PAIRING_SCRIPT_B64 = PAIRING_SCRIPT_B64

@@ -183,7 +183,7 @@ export function generateOpenClawConfig(userConfig: UserConfiguration) {
     }))
     config.agents.list = [mainAgent, ...specialistAgents]
 
-    // Enable native agent-to-agent so coordinator can use sessions_send to reach specialists
+    // Enable native agent-to-agent so coordinator can delegate to allowed specialists.
     const specialistIds = userConfig.nativeMultiAgent.agents.map(a => a.id)
     config.tools.agentToAgent = {
       enabled: true,
@@ -459,7 +459,7 @@ ${routingRule}
 
 /**
  * Build same-channel orchestration instructions for native multi-agent specialists.
- * Uses OpenClaw's built-in sessions_send tool (tools.agentToAgent) — no HTTP relay needed.
+ * Uses OpenClaw's session tools with tools.agentToAgent (no HTTP relay needed).
  */
 export function buildNativeOrchestrationInstructions(
   _instanceId: string,
@@ -475,10 +475,12 @@ export function buildNativeOrchestrationInstructions(
 You are the coordinator agent. You have specialist agents in this same gateway:
 ${list}
 
-Use the sessions_send tool to delegate subtasks to specialists:
-  sessions_send(agentId: "<agent-id>", message: "<task description>")
+Use session tools to delegate to specialists:
+1) sessions_spawn(task: "<subtask>", agentId: "<agent-id>")
+2) Read the spawned session result and merge it into your final response.
 
-The specialist will process the task and you will receive their reply. Merge all replies into one final answer for the user.
+If a specialist needs a follow-up, send it using sessions_send with that spawned session's key/id.
+Do not use web_fetch for same-gateway specialist delegation.
 
 Routing policy:
 - Match the task to the closest specialist by their role.
@@ -491,7 +493,7 @@ Append a routing summary at the end of your reply:
 - <agent-id>: <what was delegated>
 [/ROUTING TRACE]
 
-If sessions_send fails for a specialist, handle that subtask yourself and note it in ROUTING TRACE.
+If session delegation fails for a specialist, handle that subtask yourself and note it in ROUTING TRACE.
 [/NATIVE MULTI-AGENT ORCHESTRATION]`
 }
 

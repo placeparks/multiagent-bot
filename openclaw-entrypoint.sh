@@ -31,6 +31,17 @@ head -c 500 "$CONFIG_DIR/openclaw.json"
 echo ""
 echo "[ENTRYPOINT] ..."
 
+# Optional runtime update for feature compatibility (safe best-effort).
+# Set OPENCLAW_AUTO_UPDATE=1 to enable. Failures should not block startup.
+if [ "${OPENCLAW_AUTO_UPDATE:-0}" = "1" ]; then
+    echo "[ENTRYPOINT] OPENCLAW_AUTO_UPDATE=1 -> attempting openclaw update..."
+    if openclaw update; then
+        echo "[ENTRYPOINT] OpenClaw update completed."
+    else
+        echo "[ENTRYPOINT] OpenClaw update failed; continuing with current version."
+    fi
+fi
+
 # Decode and start pairing server in background
 if [ -n "$_PAIRING_SCRIPT_B64" ]; then
     echo "[ENTRYPOINT] Starting pairing server on port 18800..."
