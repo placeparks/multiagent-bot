@@ -1,0 +1,349 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  directUrl  = env("DIRECT_URL")
+  extensions = [vector]
+}
+
+model User {
+  id               String         @id @default(cuid())
+  email            String         @unique
+  name             String?
+  password         String
+  pendingConfig    Json?          // Store config before payment
+  activeInstanceId String?        // Which agent is currently selected
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  subscription  Subscription?
+  instances     Instance[]
+
+  @@map("users")
+}
+
+model Subscription {
+  id                    String   @id @default(cuid())
+  userId                String   @unique
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  stripeCustomerId      String   @unique
+  stripeSubscriptionId  String   @unique
+  stripePriceId         String
+  stripeCurrentPeriodEnd DateTime
+
+  plan                  Plan
+  status                SubscriptionStatus
+
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@map("subscriptions")
+}
+
+enum Plan {
+  MONTHLY
+  YEARLY
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  CANCELED
+  PAST_DUE
+  INCOMPLETE
+  TRIALING
+  UNPAID
+}
+
+model Instance {
+  id            String          @id @default(cuid())
+  userId        String
+  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name          String          @default("My Agent")
+
+  containerId   String?         @unique
+  containerName String          @unique
+  port          Int             @unique
+  status        InstanceStatus
+
+  accessUrl     String?
+  serviceUrl    String?         // Internal service URL for API calls
+  qrCode        String?
+
+  deployBackend   String        @default("railway") // "railway" | "docker"
+  configVersion   Int           @default(1)
+  lastConfigApply DateTime?
+
+  config        Configuration?
+
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  lastHealthCheck DateTime?
+
+  @@map("instances")
+}
+
+enum InstanceStatus {
+  DEPLOYING
+  RUNNING
+  STOPPED
+  ERROR
+  RESTARTING
+}
+
+model Configuration {
+  id          String   @id @default(cuid())
+  instanceId  String   @unique
+  instance    Instance @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+
+  // AI Provider
+  provider    AIProvider
+  apiKey      String     @db.Text
+  model       String
+
+  // Channels
+  channels    Channel[]
+
+  // Skills & Extensions
+  webSearchEnabled    Boolean @default(false)
+  braveApiKey         String?
+  browserEnabled      Boolean @default(false)
+  ttsEnabled          Boolean @default(false)
+  elevenlabsApiKey    String?
+  canvasEnabled       Boolean @default(false)
+  cronEnabled         Boolean @default(false)
+  memoryEnabled       Boolean @default(false)
+
+  // Advanced Settings
+  workspace           String?
+  agentName           String?
+  systemPrompt        String? @db.Text
+  thinkingMode        String  @default("high")
+  sessionMode         String  @default("per-sender")
+  dmPolicy            String  @default("pairing")
+  gatewayToken        String?
+
+  // Full OpenClaw config JSON
+  fullConfig          Json
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("configurations")
+}
+
+enum AIProvider {
+  ANTHROPIC
+  OPENAI
+  OPENAI_CODEX
+  OPENCODE
+  GOOGLE
+  GOOGLE_VERTEX
+  ZAI
+  VERCEL_AI_GATEWAY
+  XAI
+  GROQ
+  MISTRAL
+  DEEPSEEK
+  CEREBRAS
+  VENICE
+  MOONSHOT
+  KIMI_CODE
+  MINIMAX
+  QWEN
+  SYNTHETIC
+  TOGETHER
+  NVIDIA
+  HUGGINGFACE
+  OPENROUTER
+  GITHUB_COPILOT
+  OLLAMA
+  BEDROCK
+}
+
+model Channel {
+  id              String        @id @default(cuid())
+  configId        String
+  configuration   Configuration @relation(fields: [configId], references: [id], onDelete: Cascade)
+
+  type            ChannelType
+  enabled         Boolean       @default(true)
+
+  // Channel-specific config (JSON)
+  config          Json
+
+  // Access info
+  botUsername     String?
+  phoneNumber     String?
+  inviteLink      String?
+
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@map("channels")
+}
+
+enum ChannelType {
+  WHATSAPP
+  TELEGRAM
+  DISCORD
+  SLACK
+  SIGNAL
+  GOOGLE_CHAT
+  IMESSAGE
+  MATRIX
+  MSTEAMS
+}
+
+model DeploymentLog {
+  id          String   @id @default(cuid())
+  instanceId  String
+  action      String
+  status      String
+  message     String?  @db.Text
+  error       String?  @db.Text
+
+  createdAt   DateTime @default(now())
+
+  @@map("deployment_logs")
+}
+
+model ConfigChangeLog {
+  id          String   @id @default(cuid())
+  instanceId  String
+  field       String
+  action      String   // "update", "add", "remove"
+  status      String   @default("pending") // pending | applied | failed
+  createdAt   DateTime @default(now())
+
+  @@map("config_change_logs")
+}
+
+// ─────────────────────────────────────────────
+//  NEXUS MEMORY SYSTEM
+// ─────────────────────────────────────────────
+
+// Per-user/sender identity profile. One row per (instanceId, senderId).
+// senderId = 'default' for single-user bots.
+model MemoryProfile {
+  id                 String   @id @default(cuid())
+  instanceId         String
+  senderId           String   @default("default")
+  name               String?
+  role               String?
+  communicationStyle String?
+  timezone           String?
+  currentFocus       String?  @db.Text
+  relationshipContext String? @db.Text
+  preferences        String[]
+  metadata           Json?
+
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@unique([instanceId, senderId])
+  @@index([instanceId])
+  @@map("memory_profiles")
+}
+
+// Structured decision journal with full reasoning chains + outcomes.
+// Agent writes these during conversations. Queryable by tags or date range.
+model MemoryDecision {
+  id                     String    @id @default(cuid())
+  instanceId             String
+  senderId               String?
+  context                String    @db.Text
+  decision               String    @db.Text
+  reasoning              String[]
+  alternativesConsidered String[]
+  tags                   String[]
+  outcome                String?   @db.Text
+  outcomeAt              DateTime?
+
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  @@index([instanceId])
+  @@index([instanceId, createdAt])
+  @@map("memory_decisions")
+}
+
+// Compressed episode summaries — 1-2 sentence snapshots of significant exchanges.
+// Agent writes these to capture context without storing raw logs.
+model MemoryEpisode {
+  id         String   @id @default(cuid())
+  instanceId String
+  senderId   String?
+  summary    String   @db.Text
+  tags       String[]
+  happenedAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+
+  @@index([instanceId])
+  @@index([instanceId, happenedAt])
+  @@map("memory_episodes")
+}
+
+model KnowledgeDocument {
+  id          String         @id @default(cuid())
+  instanceId  String
+  filename    String
+  contentType String
+  sizeBytes   Int
+  content     String         @db.Text
+  status      DocumentStatus @default(PENDING)
+  chunkCount  Int            @default(0)
+  metadata    Json?
+
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  chunks      DocumentChunk[]
+
+  @@index([instanceId])
+  @@map("knowledge_documents")
+}
+
+enum DocumentStatus {
+  PENDING
+  INDEXING
+  READY
+  ERROR
+}
+
+model DocumentChunk {
+  id          String            @id @default(cuid())
+  documentId  String
+  instanceId  String
+  chunkIndex  Int
+  content     String            @db.Text
+  embedding   Unsupported("vector(1536)")?
+  metadata    Json?
+
+  createdAt   DateTime          @default(now())
+
+  document    KnowledgeDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([instanceId])
+  @@index([documentId])
+  @@map("document_chunks")
+}
+
+// Per-instance memory config: API key for agent auth + doc storage limit.
+model MemoryConfig {
+  id             String   @id @default(cuid())
+  instanceId     String   @unique
+  memoryApiKey   String   @unique
+  maxDocumentsMB Float    @default(500)
+  lastDigestAt   DateTime?
+  digestContent  String?  @db.Text
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@map("memory_configs")
+}
