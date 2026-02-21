@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { getConfigForDisplay } from '@/lib/deploy/config-updater'
 import { getActiveInstance } from '@/lib/get-active-instance'
+import { resolveCanvasUpstream } from '@/lib/canvas/resolve-upstream'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -22,18 +23,9 @@ export async function GET() {
   const canvasEnabled = config?.canvasEnabled ?? false
 
   let isRunning = false
-  if (canvasEnabled && result.instance.accessUrl) {
-    const base = result.instance.accessUrl.replace(/\/$/, '')
-    try {
-      // Hit pairing server's /canvas proxy handler (PORT=18800, public URL)
-      // which strips /canvas and forwards to the gateway at /__openclaw__/canvas/
-      const res = await fetch(`${base}/canvas/__openclaw__/canvas/`, {
-        signal: AbortSignal.timeout(3000),
-      })
-      isRunning = res.ok
-    } catch {
-      isRunning = false
-    }
+  if (canvasEnabled) {
+    const resolved = await resolveCanvasUpstream(result.instance)
+    isRunning = resolved.isRunning
   }
 
   return NextResponse.json({ canvasEnabled, isRunning })

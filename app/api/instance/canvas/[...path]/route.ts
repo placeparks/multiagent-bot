@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { getActiveInstance } from '@/lib/get-active-instance'
+import { resolveCanvasUpstream } from '@/lib/canvas/resolve-upstream'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -71,7 +72,8 @@ export async function GET(
     return NextResponse.json({ error: 'No instance found' }, { status: 404 })
   }
 
-  const accessUrl = result.instance.accessUrl?.replace(/\/$/, '')
+  const resolved = await resolveCanvasUpstream(result.instance)
+  const accessUrl = resolved.baseUrl
   if (!accessUrl) {
     return NextResponse.json({ error: 'No public URL for instance' }, { status: 503 })
   }
