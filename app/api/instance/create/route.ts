@@ -7,18 +7,31 @@ import { loadConfigFromDB } from '@/lib/deploy/config-updater'
 import { encrypt } from '@/lib/utils/encryption'
 import { getDefaultModel } from '@/lib/models'
 import { getUserInstances, AGENT_LIMITS, getRemainingAgentSlots } from '@/lib/get-active-instance'
-import { Plan } from '@prisma/client'
+import { AIProvider, ChannelType, Plan } from '@prisma/client'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 /**
  * POST /api/instance/create
- * Body: { name: string }
+ * Body: {
+ *   name: string
+ *   provider?: string          — AI provider id (e.g. "ANTHROPIC"). Defaults to copy from existing agent.
+ *   apiKey?: string            — Plain-text key or masked ("sk-a...1234"). Masked → copy encrypted key from existing agent.
+ *   model?: string             — Model id. Defaults to copy from existing agent.
+ *   channels?: { type: string; config: Record<string, any> }[]
+ *   webSearchEnabled?: boolean
+ *   braveApiKey?: string
+ *   browserEnabled?: boolean
+ *   ttsEnabled?: boolean
+ *   elevenlabsApiKey?: string
+ *   canvasEnabled?: boolean
+ *   cronEnabled?: boolean
+ *   memoryEnabled?: boolean
+ * }
  *
- * Deploys a new agent for the authenticated user. Copies the AI provider config
- * from their first existing agent (channels start empty — user sets them in Settings).
- * Enforces per-plan agent limits.
+ * Deploys a new agent. Provider config can be supplied by the caller (wizard) or
+ * copied from the user's primary agent. Enforces per-plan agent limits.
  */
 export async function POST(req: Request) {
   const session = await getServerSession(authOptions)
@@ -28,6 +41,12 @@ export async function POST(req: Request) {
 
   const body = await req.json()
   const name: string = (body.name ?? '').trim() || 'My Agent'
+
+  // Optional wizard fields
+  const reqProvider = body.provider as string | undefined
+  const reqApiKey = body.apiKey as string | undefined
+  const reqModel = body.model as string | undefined
+  const reqChannels = body.channels as Array<{ type: string; config: Record<string, any> }> | undefined
 
   const result = await getUserInstances(session.user.email)
   if (!result) {
@@ -53,7 +72,7 @@ export async function POST(req: Request) {
     )
   }
 
-  // Must have at least one existing agent to copy provider config from
+  // Must have at least one existing agent to copy base provider config from
   if (instances.length === 0) {
     return NextResponse.json(
       { error: 'No existing agent found to copy provider config from. Complete initial setup first.' },
@@ -61,39 +80,106 @@ export async function POST(req: Request) {
     )
   }
 
-  // Load provider config from the first (primary) agent — skip channels
+  // Load provider config from the primary agent (for fallback values + encrypted key copy)
   const baseConfig = await loadConfigFromDB(instances[0].id)
+  const baseConfigRow = await prisma.configuration.findUnique({
+    where: { instanceId: instances[0].id },
+  })
+  if (!baseConfigRow) {
+    return NextResponse.json({ error: 'Base configuration not found' }, { status: 500 })
+  }
+
+  // --- Resolve provider ---
+  const validProviders = Object.values(AIProvider) as string[]
+  const finalProvider: AIProvider =
+    reqProvider && validProviders.includes(reqProvider)
+      ? (reqProvider as AIProvider)
+      : baseConfig.provider
+
+  // --- Resolve API key ---
+  // A masked key contains "..." (format: "sk-a...1234"). Treat it as "copy from existing agent".
+  const isMasked = reqApiKey ? reqApiKey.includes('...') : true
+  const finalApiKeyPlain: string = (!isMasked && reqApiKey) ? reqApiKey : baseConfig.apiKey
+  const encryptedApiKey: string = (!isMasked && reqApiKey)
+    ? encrypt(reqApiKey)
+    : baseConfigRow.apiKey   // Already encrypted — reuse to avoid re-encrypt of same value
+
+  // --- Resolve model ---
+  const finalModel: string = reqModel || baseConfig.model || getDefaultModel(finalProvider)
+
+  // --- Resolve channels ---
+  const channelsList = reqChannels && reqChannels.length > 0 ? reqChannels : []
+
+  // --- Resolve skills ---
+  const webSearchEnabled: boolean = body.webSearchEnabled ?? false
+  const browserEnabled: boolean = body.browserEnabled ?? false
+  const ttsEnabled: boolean = body.ttsEnabled ?? false
+  const canvasEnabled: boolean = body.canvasEnabled ?? false
+  const cronEnabled: boolean = body.cronEnabled ?? false
+  const memoryEnabled: boolean = body.memoryEnabled ?? false
+  const braveApiKey: string | undefined = body.braveApiKey || undefined
+  const elevenlabsApiKey: string | undefined = body.elevenlabsApiKey || undefined
+
+  // Build config for deployment (passed to the provider to generate OpenClaw config JSON)
   const newConfig = {
     ...baseConfig,
     agentName: name,
+    provider: finalProvider,
+    apiKey: finalApiKeyPlain,
+    model: finalModel,
     systemPrompt: undefined,
-    channels: [], // user configures channels after creation
-    canvasEnabled: false,
-    cronEnabled: false,
-    memoryEnabled: false,
-    webSearchEnabled: false,
-    ttsEnabled: false,
-    browserEnabled: false,
+    channels: channelsList,
+    webSearchEnabled,
+    browserEnabled,
+    ttsEnabled,
+    canvasEnabled,
+    cronEnabled,
+    memoryEnabled,
+    braveApiKey: webSearchEnabled ? braveApiKey : undefined,
+    elevenlabsApiKey: ttsEnabled ? elevenlabsApiKey : undefined,
   }
 
   try {
     const deployment = await getProvider().deploy(user.id, newConfig)
 
-    // Save configuration
-    const encryptedApiKey = encrypt(newConfig.apiKey)
-    await prisma.configuration.create({
+    // Save Configuration row (individual columns)
+    const configRecord = await prisma.configuration.create({
       data: {
         instanceId: deployment.instanceId,
-        provider: newConfig.provider,
+        provider: finalProvider,
         apiKey: encryptedApiKey,
-        model: newConfig.model || getDefaultModel(newConfig.provider),
+        model: finalModel,
         agentName: name,
-        thinkingMode: newConfig.thinkingMode || 'high',
-        sessionMode: newConfig.sessionMode || 'per-sender',
-        dmPolicy: newConfig.dmPolicy || 'pairing',
+        thinkingMode: baseConfig.thinkingMode || 'high',
+        sessionMode: baseConfig.sessionMode || 'per-sender',
+        dmPolicy: baseConfig.dmPolicy || 'pairing',
+        webSearchEnabled,
+        browserEnabled,
+        ttsEnabled,
+        canvasEnabled,
+        cronEnabled,
+        memoryEnabled,
+        braveApiKey: (webSearchEnabled && braveApiKey) ? encrypt(braveApiKey) : null,
+        elevenlabsApiKey: (ttsEnabled && elevenlabsApiKey) ? encrypt(elevenlabsApiKey) : null,
         fullConfig: newConfig as any,
       },
     })
+
+    // Save channels if provided
+    if (channelsList.length > 0) {
+      const validChannelTypes = Object.values(ChannelType) as string[]
+      const validChannels = channelsList.filter(ch => validChannelTypes.includes(ch.type))
+      if (validChannels.length > 0) {
+        await prisma.channel.createMany({
+          data: validChannels.map(ch => ({
+            configId: configRecord.id,
+            type: ch.type as ChannelType,
+            enabled: true,
+            config: ch.config ?? {},
+          })),
+        })
+      }
+    }
 
     // Update the instance name
     await prisma.instance.update({

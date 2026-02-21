@@ -2,11 +2,9 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
-import { useRouter } from 'next/navigation'
-import { Bot, ChevronDown, Plus, CheckCircle, Loader2, X } from 'lucide-react'
+import { Bot, ChevronDown, Plus, CheckCircle, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
+import NewAgentWizard from '@/components/dashboard/new-agent-wizard'
 
 interface AgentInfo {
   id: string
@@ -27,16 +25,12 @@ interface AgentListData {
 interface DropdownPos { top: number; left: number; width: number }
 
 export default function AgentSwitcher() {
-  const router = useRouter()
   const [data, setData] = useState<AgentListData | null>(null)
   const [loading, setLoading] = useState(true)
   const [open, setOpen] = useState(false)
   const [dropdownPos, setDropdownPos] = useState<DropdownPos | null>(null)
   const [switching, setSwitching] = useState(false)
-  const [showNewDialog, setShowNewDialog] = useState(false)
-  const [newAgentName, setNewAgentName] = useState('')
-  const [creating, setCreating] = useState(false)
-  const [createError, setCreateError] = useState('')
+  const [showWizard, setShowWizard] = useState(false)
   const [mounted, setMounted] = useState(false)
   const buttonRef = useRef<HTMLButtonElement>(null)
 
@@ -54,7 +48,6 @@ export default function AgentSwitcher() {
     if (!open) return
     function handleClick(e: MouseEvent) {
       const target = e.target as Node
-      // Check if click is on button or inside the portal dropdown
       if (buttonRef.current?.contains(target)) return
       const portalDropdown = document.getElementById('agent-switcher-dropdown')
       if (portalDropdown?.contains(target)) return
@@ -88,29 +81,6 @@ export default function AgentSwitcher() {
       window.location.reload()
     } finally {
       setSwitching(false)
-    }
-  }
-
-  async function createAgent() {
-    if (creating) return
-    setCreating(true)
-    setCreateError('')
-    try {
-      const res = await fetch('/api/instance/create', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: newAgentName.trim() || 'My Agent' }),
-      })
-      const json = await res.json()
-      if (!res.ok) {
-        setCreateError(json.error || 'Failed to create agent')
-        return
-      }
-      setShowNewDialog(false)
-      setNewAgentName('')
-      window.location.href = '/dashboard/settings'
-    } finally {
-      setCreating(false)
     }
   }
 
@@ -185,7 +155,7 @@ export default function AgentSwitcher() {
             <>
               <div className="border-t border-zinc-600 mt-1 mb-1" />
               <button
-                onClick={() => { setOpen(false); setShowNewDialog(true) }}
+                onClick={() => { setOpen(false); setShowWizard(true) }}
                 className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-400 hover:bg-zinc-700 transition-colors"
               >
                 <Plus className="w-3.5 h-3.5" />
@@ -207,75 +177,11 @@ export default function AgentSwitcher() {
         document.body
       )}
 
-      {/* Portal modal — also at document.body */}
-      {mounted && showNewDialog && createPortal(
-        <div style={{ position: 'fixed', inset: 0, zIndex: 999999 }} className="flex items-center justify-center">
-          {/* Backdrop */}
-          <div
-            className="absolute inset-0 bg-black/70 backdrop-blur-sm"
-            onClick={() => setShowNewDialog(false)}
-          />
-          {/* Panel */}
-          <div className="relative z-10 w-full max-w-md mx-4 rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl p-6">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2">
-                <Bot className="w-5 h-5 text-red-400" />
-                <h2 className="text-white font-semibold text-lg">New Agent</h2>
-              </div>
-              <button
-                onClick={() => setShowNewDialog(false)}
-                className="text-zinc-500 hover:text-zinc-300 transition-colors"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <p className="text-zinc-400 text-sm mb-5">
-              Deploy a new AI agent. It copies your AI provider settings — configure
-              channels and skills after creation.
-            </p>
-
-            <div className="space-y-2 mb-4">
-              <Label htmlFor="agent-name" className="text-zinc-300">Agent Name</Label>
-              <Input
-                id="agent-name"
-                placeholder="e.g. Support Bot"
-                value={newAgentName}
-                onChange={e => setNewAgentName(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && createAgent()}
-                className="bg-zinc-800 border-zinc-600 text-white placeholder:text-zinc-500"
-                autoFocus
-              />
-            </div>
-
-            {createError && (
-              <p className="text-sm text-red-400 mb-4">{createError}</p>
-            )}
-
-            <div className="flex gap-3 justify-end">
-              <Button
-                variant="outline"
-                onClick={() => setShowNewDialog(false)}
-                className="border-zinc-600 text-zinc-300 hover:bg-zinc-800"
-              >
-                Cancel
-              </Button>
-              <Button
-                onClick={createAgent}
-                disabled={creating}
-                className="bg-red-600 hover:bg-red-700 text-white"
-              >
-                {creating ? (
-                  <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Deploying...</>
-                ) : (
-                  'Deploy Agent'
-                )}
-              </Button>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
+      {/* New Agent Wizard — portal-rendered, handles its own overlay */}
+      <NewAgentWizard
+        open={showWizard}
+        onClose={() => setShowWizard(false)}
+      />
     </>
   )
 }
