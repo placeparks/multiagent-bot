@@ -357,6 +357,7 @@ model AgentLink {
   id               String   @id @default(cuid())
   sourceInstanceId String
   targetInstanceId String
+  role             String?  // e.g. "Python/backend specialist", "copywriter"
   createdAt        DateTime @default(now())
 
   sourceInstance   Instance @relation("SourceLinks", fields: [sourceInstanceId], references: [id], onDelete: Cascade)

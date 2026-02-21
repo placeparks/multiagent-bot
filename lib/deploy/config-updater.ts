@@ -31,7 +31,7 @@ export async function loadConfigFromDB(instanceId: string): Promise<UserConfigur
           id: true,
           name: true,
           serviceUrl: true,
-          config: { select: { gatewayToken: true } },
+          config: { select: { gatewayToken: true, agentName: true } },
         },
       },
     },
@@ -41,9 +41,10 @@ export async function loadConfigFromDB(instanceId: string): Promise<UserConfigur
     .filter((l: any) => l.targetInstance?.serviceUrl && l.targetInstance?.config?.gatewayToken)
     .map((l: any) => ({
       id: l.targetInstance.id,
-      name: l.targetInstance.name || 'Agent',
+      name: l.targetInstance.config?.agentName || l.targetInstance.name || 'Agent',
       gatewayUrl: l.targetInstance.serviceUrl,
       token: l.targetInstance.config.gatewayToken,
+      role: l.role || undefined,
     }))
 
   return {
@@ -344,18 +345,24 @@ export async function rebuildAndApply(instanceId: string) {
 }
 
 /**
- * Add or remove an agent-to-agent link and redeploy.
+ * Add, remove, or update the role on an agent-to-agent link, then redeploy.
  */
 export async function applyConnectionsUpdate(
   sourceInstanceId: string,
   targetInstanceId: string,
-  action: 'add' | 'remove'
+  action: 'add' | 'remove' | 'update_role',
+  role?: string
 ) {
   if (action === 'add') {
     await (prisma as any).agentLink.upsert({
       where: { sourceInstanceId_targetInstanceId: { sourceInstanceId, targetInstanceId } },
-      create: { sourceInstanceId, targetInstanceId, id: require('crypto').randomUUID() },
-      update: {},
+      create: { sourceInstanceId, targetInstanceId, id: require('crypto').randomUUID(), role: role ?? null },
+      update: { role: role ?? null },
+    })
+  } else if (action === 'update_role') {
+    await (prisma as any).agentLink.updateMany({
+      where: { sourceInstanceId, targetInstanceId },
+      data: { role: role ?? null },
     })
   } else {
     await (prisma as any).agentLink.deleteMany({

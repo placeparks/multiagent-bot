@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS "agent_links" (
   "id"               TEXT NOT NULL PRIMARY KEY,
   "sourceInstanceId" TEXT NOT NULL,
   "targetInstanceId" TEXT NOT NULL,
+  "role"             TEXT,
   "createdAt"        TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
   CONSTRAINT "agent_links_sourceInstanceId_fkey"

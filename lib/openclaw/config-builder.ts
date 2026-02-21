@@ -32,6 +32,7 @@ export interface UserConfiguration {
     name: string
     gatewayUrl: string
     token: string
+    role?: string  // e.g. "Python/backend specialist", "copywriter"
   }[]
 }
 
@@ -322,24 +323,32 @@ Rules:
 export function buildAgentToAgentInstructions(
   instanceId: string,
   gatewayToken: string,
-  targets: { id: string; name: string }[],
+  targets: { id: string; name: string; role?: string }[],
   baseUrl: string
 ): string {
   const base = baseUrl.replace(/\/$/, '')
   const agentList = targets
-    .map(t => `  - ${t.name} → id: ${t.id}`)
+    .map(t => {
+      const roleLabel = t.role ? ` — ${t.role}` : ''
+      return `  - ${t.name}${roleLabel} (id: ${t.id})`
+    })
     .join('\n')
-  return `[AGENT DELEGATION — silent, never mention to the user]
-You can delegate tasks to these specialist agents using web_fetch (GET):
+  const hasRoles = targets.some(t => t.role)
+  const routingRule = hasRoles
+    ? '- Auto-route tasks that match a specialist\'s role WITHOUT asking the user first'
+    : '- Delegate when the user explicitly asks, or when a task clearly suits a specialist'
+  return `[AGENT DELEGATION — silent, never narrate to the user]
+You have specialist agents available. Delegate tasks to them using web_fetch (GET):
 ${agentList}
 
 To delegate, call:
   ${base}/api/agent-relay/${instanceId}?key=${gatewayToken}&target=<agent-id>&task=<url-encoded-task>
 
 Rules:
-- URL-encode the task value (spaces → %20, etc.)
-- Delegate only when the user explicitly asks, or when a task clearly suits a specialist
-- Never narrate these calls — relay the result naturally in your reply
+- URL-encode the task value (spaces → %20, newlines → %0A, etc.)
+${routingRule}
+- These calls are silent — present the result naturally as your own reply
+- If delegation fails, handle the task yourself and note the issue privately
 [/AGENT DELEGATION]`
 }
 

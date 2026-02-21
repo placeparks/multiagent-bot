@@ -1,15 +1,17 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Switch } from '@/components/ui/switch'
-import { Bot, ArrowRight, Loader2, RefreshCw } from 'lucide-react'
+import { Input } from '@/components/ui/input'
+import { Bot, ArrowRight, Loader2, RefreshCw, Check } from 'lucide-react'
 
 interface AgentEntry {
   id: string
   name: string
   status: string
   linked: boolean
+  role: string
 }
 
 interface ConnectionsSettingsProps {
@@ -20,7 +22,11 @@ export function ConnectionsSettings({ onConfigChange }: ConnectionsSettingsProps
   const [agents, setAgents] = useState<AgentEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [toggling, setToggling] = useState<string | null>(null)
+  const [savingRole, setSavingRole] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // Track local role edits keyed by agent id
+  const [roleEdits, setRoleEdits] = useState<Record<string, string>>({})
+  const debounceTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
 
   const fetchAgents = async () => {
     setLoading(true)
@@ -30,6 +36,10 @@ export function ConnectionsSettings({ onConfigChange }: ConnectionsSettingsProps
       if (!res.ok) throw new Error((await res.json()).error)
       const data = await res.json()
       setAgents(data.otherAgents)
+      // Seed role edits from server data
+      const edits: Record<string, string> = {}
+      data.otherAgents.forEach((a: AgentEntry) => { edits[a.id] = a.role })
+      setRoleEdits(edits)
     } catch (err: any) {
       setError(err.message || 'Failed to load agents')
     } finally {
@@ -39,6 +49,10 @@ export function ConnectionsSettings({ onConfigChange }: ConnectionsSettingsProps
 
   useEffect(() => {
     fetchAgents()
+    return () => {
+      // Clear any pending debounce timers on unmount
+      Object.values(debounceTimers.current).forEach(clearTimeout)
+    }
   }, [])
 
   const toggle = async (agentId: string, currentlyLinked: boolean) => {
@@ -51,10 +65,10 @@ export function ConnectionsSettings({ onConfigChange }: ConnectionsSettingsProps
         body: JSON.stringify({
           targetInstanceId: agentId,
           action: currentlyLinked ? 'remove' : 'add',
+          role: roleEdits[agentId] || undefined,
         }),
       })
       if (!res.ok) throw new Error((await res.json()).error)
-      // Optimistically update local state
       setAgents(prev =>
         prev.map(a => a.id === agentId ? { ...a, linked: !currentlyLinked } : a)
       )
@@ -64,6 +78,41 @@ export function ConnectionsSettings({ onConfigChange }: ConnectionsSettingsProps
     } finally {
       setToggling(null)
     }
+  }
+
+  const saveRole = async (agentId: string, role: string) => {
+    const agent = agents.find(a => a.id === agentId)
+    if (!agent?.linked) return  // Only save role for linked agents
+    setSavingRole(agentId)
+    try {
+      const res = await fetch('/api/instance/config/connections', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          targetInstanceId: agentId,
+          action: 'update_role',
+          role: role || undefined,
+        }),
+      })
+      if (!res.ok) throw new Error((await res.json()).error)
+      setAgents(prev =>
+        prev.map(a => a.id === agentId ? { ...a, role } : a)
+      )
+      onConfigChange()
+    } catch (err: any) {
+      setError(err.message || 'Failed to save role')
+    } finally {
+      setSavingRole(null)
+    }
+  }
+
+  const handleRoleChange = (agentId: string, value: string) => {
+    setRoleEdits(prev => ({ ...prev, [agentId]: value }))
+    // Debounce auto-save by 1.2s
+    if (debounceTimers.current[agentId]) clearTimeout(debounceTimers.current[agentId])
+    debounceTimers.current[agentId] = setTimeout(() => {
+      saveRole(agentId, value)
+    }, 1200)
   }
 
   if (loading) {
@@ -113,8 +162,8 @@ export function ConnectionsSettings({ onConfigChange }: ConnectionsSettingsProps
           <Card key={agent.id} className="border border-red-500/15 bg-white/[0.02] text-white overflow-hidden">
             <CardContent className="py-4">
               <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className={`w-9 h-9 rounded-lg border flex items-center justify-center transition-all duration-300 ${
+                <div className="flex items-center gap-3 flex-1 min-w-0">
+                  <div className={`w-9 h-9 rounded-lg border flex items-center justify-center transition-all duration-300 shrink-0 ${
                     agent.linked
                       ? 'border-red-500/30 bg-red-500/10'
                       : 'border-white/10 bg-white/[0.03]'
@@ -125,7 +174,7 @@ export function ConnectionsSettings({ onConfigChange }: ConnectionsSettingsProps
                       <Bot className={`h-4 w-4 ${agent.linked ? 'text-red-400' : 'text-white/30'}`} />
                     )}
                   </div>
-                  <div>
+                  <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <p className="text-sm font-medium">{agent.name}</p>
                       <span className={`px-1.5 py-0.5 rounded text-[9px] font-mono uppercase tracking-wider ${
@@ -136,11 +185,27 @@ export function ConnectionsSettings({ onConfigChange }: ConnectionsSettingsProps
                         {agent.status.toLowerCase()}
                       </span>
                     </div>
+
                     {agent.linked && (
-                      <p className="text-[10px] text-red-400/50 font-mono flex items-center gap-1 mt-0.5">
-                        <ArrowRight className="w-2.5 h-2.5" />
-                        Can receive delegated tasks
-                      </p>
+                      <div className="mt-1.5">
+                        <p className="text-[10px] text-red-400/50 font-mono flex items-center gap-1 mb-1">
+                          <ArrowRight className="w-2.5 h-2.5" />
+                          Specialist role (used for auto-routing)
+                        </p>
+                        <div className="relative flex items-center gap-1.5">
+                          <Input
+                            value={roleEdits[agent.id] ?? ''}
+                            onChange={e => handleRoleChange(agent.id, e.target.value)}
+                            placeholder="e.g. Python/backend specialist, copywriter..."
+                            className="h-7 text-xs bg-white/[0.03] border-white/10 text-white/70 placeholder:text-white/20 font-mono focus-visible:ring-red-500/30"
+                          />
+                          {savingRole === agent.id ? (
+                            <Loader2 className="w-3 h-3 text-white/30 animate-spin shrink-0" />
+                          ) : (roleEdits[agent.id] ?? '') === agent.role && agent.role ? (
+                            <Check className="w-3 h-3 text-green-400/50 shrink-0" />
+                          ) : null}
+                        </div>
+                      </div>
                     )}
                   </div>
                 </div>
@@ -148,6 +213,7 @@ export function ConnectionsSettings({ onConfigChange }: ConnectionsSettingsProps
                   checked={agent.linked}
                   disabled={toggling === agent.id}
                   onCheckedChange={() => toggle(agent.id, agent.linked)}
+                  className="ml-3 shrink-0"
                 />
               </div>
             </CardContent>
@@ -156,7 +222,7 @@ export function ConnectionsSettings({ onConfigChange }: ConnectionsSettingsProps
       )}
 
       <p className="text-[11px] text-white/15 font-mono text-center pt-1">
-        Connections are one-directional. To let both agents call each other, enable from both sides.
+        Set a role so the coordinator auto-routes tasks without being told. Connections are one-directional.
       </p>
     </div>
   )

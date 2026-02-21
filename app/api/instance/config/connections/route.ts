@@ -28,12 +28,12 @@ export async function GET() {
 
   const sourceId = result.instance.id
 
-  // Current outgoing links from this agent
+  // Current outgoing links from this agent (with role)
   const links = await (prisma as any).agentLink.findMany({
     where: { sourceInstanceId: sourceId },
-    select: { targetInstanceId: true },
+    select: { targetInstanceId: true, role: true },
   })
-  const linkedIds = new Set(links.map((l: any) => l.targetInstanceId))
+  const linkMap = new Map(links.map((l: any) => [l.targetInstanceId, l.role ?? '']))
 
   // All other agents this user owns (excluding the active one)
   const otherAgents = allInstances.instances
@@ -42,7 +42,8 @@ export async function GET() {
       id: i.id,
       name: i.config?.agentName || i.name || 'Agent',
       status: i.status,
-      linked: linkedIds.has(i.id),
+      linked: linkMap.has(i.id),
+      role: linkMap.get(i.id) ?? '',
     }))
 
   return NextResponse.json({ otherAgents })
@@ -50,7 +51,7 @@ export async function GET() {
 
 /**
  * POST /api/instance/config/connections
- * Body: { targetInstanceId: string, action: 'add' | 'remove' }
+ * Body: { targetInstanceId: string, action: 'add' | 'remove', role?: string }
  */
 export async function POST(req: Request) {
   const session = await getServerSession(authOptions)
@@ -64,9 +65,13 @@ export async function POST(req: Request) {
   }
 
   const body = await req.json()
-  const { targetInstanceId, action } = body as { targetInstanceId: string; action: 'add' | 'remove' }
+  const { targetInstanceId, action, role } = body as {
+    targetInstanceId: string
+    action: 'add' | 'remove' | 'update_role'
+    role?: string
+  }
 
-  if (!targetInstanceId || !['add', 'remove'].includes(action)) {
+  if (!targetInstanceId || !['add', 'remove', 'update_role'].includes(action)) {
     return NextResponse.json({ error: 'Invalid request' }, { status: 400 })
   }
 
@@ -83,12 +88,14 @@ export async function POST(req: Request) {
   }
 
   try {
-    await applyConnectionsUpdate(result.instance.id, targetInstanceId, action)
+    await applyConnectionsUpdate(result.instance.id, targetInstanceId, action, role)
     return NextResponse.json({
       success: true,
       message: action === 'add'
         ? 'Connection added. Agent is redeploying...'
-        : 'Connection removed. Agent is redeploying...',
+        : action === 'remove'
+          ? 'Connection removed. Agent is redeploying...'
+          : 'Role updated. Agent is redeploying...',
     })
   } catch (err: any) {
     console.error('Connections update error:', err)
