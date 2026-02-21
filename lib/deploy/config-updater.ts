@@ -5,6 +5,7 @@ import {
   buildSystemPromptWithMemory,
   buildMemoryInstructions,
   buildAgentToAgentInstructions,
+  buildNativeOrchestrationInstructions,
   buildEnvVariableInstructions,
   UserConfiguration,
 } from '@/lib/openclaw/config-builder'
@@ -361,8 +362,8 @@ export async function rebuildAndApply(instanceId: string) {
     }
   }
 
-  // Inject agent-to-agent delegation instructions (if this agent has linked targets)
-  if (userConfig.agentToAgentTargets?.length && userConfig.gatewayToken) {
+  // Inject legacy cross-instance delegation instructions (if configured and native orchestration is off)
+  if (!userConfig.nativeMultiAgent?.enabled && userConfig.agentToAgentTargets?.length && userConfig.gatewayToken) {
     try {
       const baseUrl = (process.env.NEXTAUTH_URL ?? '').replace(/\/$/, '')
       if (baseUrl) {
@@ -378,6 +379,23 @@ export async function rebuildAndApply(instanceId: string) {
       }
     } catch (err) {
       console.warn('[A2A] Agent-to-agent instructions skipped:', err)
+    }
+  }
+
+  // Inject native same-channel orchestration instructions.
+  if (userConfig.nativeMultiAgent?.enabled && userConfig.nativeMultiAgent.agents?.length && userConfig.gatewayToken && baseUrl) {
+    try {
+      const orchestration = buildNativeOrchestrationInstructions(
+        instanceId,
+        userConfig.gatewayToken,
+        userConfig.nativeMultiAgent.agents.map(a => ({ id: a.id, name: a.name, role: a.role })),
+        baseUrl
+      )
+      userConfig.systemPrompt = userConfig.systemPrompt
+        ? `${userConfig.systemPrompt}\n\n${orchestration}`
+        : orchestration
+    } catch (err) {
+      console.warn('[Native Multi-Agent] Orchestration instructions skipped:', err)
     }
   }
 

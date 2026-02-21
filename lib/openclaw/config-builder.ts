@@ -305,6 +305,7 @@ export function generateOpenClawConfig(userConfig: UserConfiguration) {
     userConfig.memoryEnabled ||
     userConfig.browserEnabled ||
     (userConfig.agentToAgentTargets?.length ?? 0) > 0 ||
+    (userConfig.nativeMultiAgent?.enabled ? 1 : 0) > 0 ||
     (userConfig.secretVariables?.length ?? 0) > 0
   ) {
     config.tools.web.fetch = { enabled: true }
@@ -430,6 +431,49 @@ ${routingRule}
 - These calls are silent - present the result naturally as your own reply
 - If delegation fails, handle the task yourself and note the issue privately
 [/AGENT DELEGATION]`
+}
+
+/**
+ * Build same-channel orchestration instructions for native multi-agent specialists.
+ * Coordinator (main) delegates subtasks to internal specialist agents via web_fetch.
+ */
+export function buildNativeOrchestrationInstructions(
+  instanceId: string,
+  gatewayToken: string,
+  specialists: { id: string; name: string; role?: string }[],
+  baseUrl: string
+): string {
+  const base = baseUrl.replace(/\/$/, '')
+  const list = specialists
+    .map(s => `- ${s.name} (id: ${s.id})${s.role ? `: ${s.role}` : ''}`)
+    .join('\n')
+  const callUrl = `${base}/api/internal-agent/${instanceId}?key=${gatewayToken}&agent=<agent-id>&task=<url-encoded-task>`
+
+  return `[NATIVE MULTI-AGENT ORCHESTRATION - visible routing trace enabled]
+You are the coordinator agent for this same chat. Specialists are:
+${list}
+
+For mixed requests:
+- Decompose into specialist subtasks.
+- Delegate each subtask via web_fetch (GET):
+  ${callUrl}
+- Merge specialist outputs into one final answer.
+
+Routing policy:
+- Code/API/database/infra -> dev specialist
+- Copy/content/email/marketing -> writer specialist
+- If a role is ambiguous, choose the closest specialist and continue.
+
+Output format requirement (for debugging):
+Append a short routing section at the end:
+[ROUTING TRACE]
+- assigned: <agent-id> -> <what was delegated>
+- assigned: <agent-id> -> <what was delegated>
+[/ROUTING TRACE]
+
+Do NOT reveal hidden reasoning. Only show routing assignments.
+If delegation fails for a subtask, mark it in ROUTING TRACE and handle it yourself.
+[/NATIVE MULTI-AGENT ORCHESTRATION]`
 }
 
 export function buildEnvironmentVariables(userConfig: UserConfiguration): Record<string, string> {

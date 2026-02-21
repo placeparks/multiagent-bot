@@ -19,6 +19,12 @@ interface MemoryStats {
   memoryApiKey: string
 }
 
+interface SpecialistAgent {
+  id: string
+  name: string
+  role?: string
+}
+
 function StatCard({
   icon: Icon,
   label,
@@ -65,6 +71,7 @@ export default function MemoryDashboard() {
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [specialists, setSpecialists] = useState<SpecialistAgent[]>([])
 
   async function load() {
     try {
@@ -77,6 +84,17 @@ export default function MemoryDashboard() {
       if (statsRes.ok) {
         const data = await statsRes.json()
         setStats(data.stats)
+      }
+
+      const configRes = await fetch('/api/instance/config')
+      if (configRes.ok) {
+        const data = await configRes.json()
+        const agents = data?.config?.nativeMultiAgent?.enabled
+          ? data?.config?.nativeMultiAgent?.agents ?? []
+          : []
+        setSpecialists(agents)
+      } else {
+        setSpecialists([])
       }
     } catch (err) {
       console.error('Memory stats load failed:', err)
@@ -194,6 +212,31 @@ export default function MemoryDashboard() {
             </div>
           </div>
         )}
+
+        {/* Native Specialists */}
+        <div className="bg-white/[0.02] border border-white/10 rounded-xl p-5 space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-white/70">Specialist Agents</h2>
+            <span className="text-xs font-mono text-white/30">
+              {specialists.length} configured
+            </span>
+          </div>
+          {specialists.length === 0 ? (
+            <p className="text-xs text-white/35">
+              No specialists configured. Add them in Settings → Multi-Agent.
+            </p>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              {specialists.map(agent => (
+                <div key={agent.id} className="rounded-lg border border-white/10 px-3 py-2">
+                  <p className="text-sm text-white/80">{agent.name}</p>
+                  <p className="text-[11px] font-mono text-white/35">id: {agent.id}</p>
+                  {agent.role && <p className="text-xs text-white/45 mt-1">{agent.role}</p>}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
 
         {/* Quick Nav */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
