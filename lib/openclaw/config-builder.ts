@@ -167,7 +167,7 @@ export function generateOpenClawConfig(userConfig: UserConfiguration) {
     const inferredKind =
       channel === 'telegram' && normalized.startsWith('-')
         ? 'group'
-        : 'direct'
+        : 'dm'
 
     return {
       kind: inferredKind,
