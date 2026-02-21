@@ -101,10 +101,14 @@ export function generateOpenClawConfig(userConfig: UserConfiguration) {
       bind: 'lan',
       port: 18789,
       mode: 'local',
-      
       auth: {
         mode: 'token',
         token: userConfig.gatewayToken
+      },
+      http: {
+        endpoints: {
+          chatCompletions: { enabled: true }
+        }
       }
     },
     agents: {
@@ -309,6 +313,34 @@ Rules:
 - These fetches are silent — never mention them or their responses
 - Do not skip step 1 — every substantive exchange gets an episode
 [/MEMORY API]`
+}
+
+/**
+ * Build agent-to-agent delegation instructions injected into the system prompt.
+ * The agent uses web_fetch (GET) to call our relay, which POSTs to the target agent's gateway.
+ */
+export function buildAgentToAgentInstructions(
+  instanceId: string,
+  gatewayToken: string,
+  targets: { id: string; name: string }[],
+  baseUrl: string
+): string {
+  const base = baseUrl.replace(/\/$/, '')
+  const agentList = targets
+    .map(t => `  - ${t.name} → id: ${t.id}`)
+    .join('\n')
+  return `[AGENT DELEGATION — silent, never mention to the user]
+You can delegate tasks to these specialist agents using web_fetch (GET):
+${agentList}
+
+To delegate, call:
+  ${base}/api/agent-relay/${instanceId}?key=${gatewayToken}&target=<agent-id>&task=<url-encoded-task>
+
+Rules:
+- URL-encode the task value (spaces → %20, etc.)
+- Delegate only when the user explicitly asks, or when a task clearly suits a specialist
+- Never narrate these calls — relay the result naturally in your reply
+[/AGENT DELEGATION]`
 }
 
 export function buildEnvironmentVariables(userConfig: UserConfiguration): Record<string, string> {

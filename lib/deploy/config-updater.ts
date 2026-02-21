@@ -4,6 +4,7 @@ import {
   generateOpenClawConfig,
   buildSystemPromptWithMemory,
   buildMemoryInstructions,
+  buildAgentToAgentInstructions,
   UserConfiguration,
 } from '@/lib/openclaw/config-builder'
 import { decrypt, encrypt } from '@/lib/utils/encryption'
@@ -297,6 +298,26 @@ export async function rebuildAndApply(instanceId: string) {
     } catch (err) {
       // Non-fatal — memory is best-effort
       console.warn('[Memory] Digest/instructions build skipped:', err)
+    }
+  }
+
+  // Inject agent-to-agent delegation instructions (if this agent has linked targets)
+  if (userConfig.agentToAgentTargets?.length && userConfig.gatewayToken) {
+    try {
+      const baseUrl = (process.env.NEXTAUTH_URL ?? '').replace(/\/$/, '')
+      if (baseUrl) {
+        const a2aInstructions = buildAgentToAgentInstructions(
+          instanceId,
+          userConfig.gatewayToken,
+          userConfig.agentToAgentTargets,
+          baseUrl
+        )
+        userConfig.systemPrompt = userConfig.systemPrompt
+          ? `${userConfig.systemPrompt}\n\n${a2aInstructions}`
+          : a2aInstructions
+      }
+    } catch (err) {
+      console.warn('[A2A] Agent-to-agent instructions skipped:', err)
     }
   }
 
