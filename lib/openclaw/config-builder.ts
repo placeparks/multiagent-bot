@@ -183,6 +183,13 @@ export function generateOpenClawConfig(userConfig: UserConfiguration) {
     }))
     config.agents.list = [mainAgent, ...specialistAgents]
 
+    // Enable native agent-to-agent so coordinator can use sessions_send to reach specialists
+    const specialistIds = userConfig.nativeMultiAgent.agents.map(a => a.id)
+    config.tools.agentToAgent = {
+      enabled: true,
+      allow: specialistIds,
+    }
+
     const bindings = userConfig.nativeMultiAgent.agents.flatMap(agent =>
       (agent.bindings ?? [])
         .filter(b => b.channel || b.accountId || b.peerId)
@@ -452,44 +459,39 @@ ${routingRule}
 
 /**
  * Build same-channel orchestration instructions for native multi-agent specialists.
- * Coordinator (main) delegates subtasks to internal specialist agents via web_fetch.
+ * Uses OpenClaw's built-in sessions_send tool (tools.agentToAgent) — no HTTP relay needed.
  */
 export function buildNativeOrchestrationInstructions(
-  instanceId: string,
-  gatewayToken: string,
+  _instanceId: string,
+  _gatewayToken: string,
   specialists: { id: string; name: string; role?: string }[],
-  baseUrl: string
+  _baseUrl: string
 ): string {
-  const base = baseUrl.replace(/\/$/, '')
   const list = specialists
-    .map(s => `- ${s.name} (id: ${s.id})${s.role ? `: ${s.role}` : ''}`)
+    .map(s => `- ${s.name} (id: "${s.id}")${s.role ? ` — ${s.role}` : ''}`)
     .join('\n')
-  const callUrl = `${base}/api/internal-agent/${instanceId}?key=${gatewayToken}&agent=<agent-id>&task=<url-encoded-task>`
 
-  return `[NATIVE MULTI-AGENT ORCHESTRATION - visible routing trace enabled]
-You are the coordinator agent for this same chat. Specialists are:
+  return `[NATIVE MULTI-AGENT ORCHESTRATION]
+You are the coordinator agent. You have specialist agents in this same gateway:
 ${list}
 
-For mixed requests:
-- Decompose into specialist subtasks.
-- Delegate each subtask via web_fetch (GET):
-  ${callUrl}
-- Merge specialist outputs into one final answer.
+Use the sessions_send tool to delegate subtasks to specialists:
+  sessions_send(agentId: "<agent-id>", message: "<task description>")
+
+The specialist will process the task and you will receive their reply. Merge all replies into one final answer for the user.
 
 Routing policy:
-- Code/API/database/infra -> dev specialist
-- Copy/content/email/marketing -> writer specialist
-- If a role is ambiguous, choose the closest specialist and continue.
+- Match the task to the closest specialist by their role.
+- For ambiguous tasks, choose the best fit and proceed — do not ask the user which agent to use.
+- You may delegate multiple subtasks in parallel if they are independent.
 
-Output format requirement (for debugging):
-Append a short routing section at the end:
+Output format:
+Append a routing summary at the end of your reply:
 [ROUTING TRACE]
-- assigned: <agent-id> -> <what was delegated>
-- assigned: <agent-id> -> <what was delegated>
+- <agent-id>: <what was delegated>
 [/ROUTING TRACE]
 
-Do NOT reveal hidden reasoning. Only show routing assignments.
-If delegation fails for a subtask, mark it in ROUTING TRACE and handle it yourself.
+If sessions_send fails for a specialist, handle that subtask yourself and note it in ROUTING TRACE.
 [/NATIVE MULTI-AGENT ORCHESTRATION]`
 }
 
