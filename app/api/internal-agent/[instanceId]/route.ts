@@ -85,7 +85,12 @@ export async function GET(
     const gatewayBases = [instance.serviceUrl, instance.accessUrl].filter(Boolean) as string[]
     const errors: string[] = []
     for (const base of gatewayBases) {
-      const gatewayUrl = `${String(base).replace(/\/$/, '')}/v1/chat/completions`
+      const cleanBase = String(base).replace(/\/$/, '')
+      const gatewayUrls = [
+        `${cleanBase}/v1/chat/completions`,
+        `${cleanBase}/__openclaw__/v1/chat/completions`,
+      ]
+      for (const gatewayUrl of gatewayUrls) {
       for (const attempt of attempts) {
         try {
           const res = await fetch(gatewayUrl, {
@@ -110,6 +115,7 @@ export async function GET(
         } catch (err: any) {
           errors.push(`${gatewayUrl} | ${attempt.name}: fetch exception ${err?.message ?? 'unknown error'}`)
         }
+      }
       }
     }
 
