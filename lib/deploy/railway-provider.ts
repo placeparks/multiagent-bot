@@ -12,8 +12,28 @@ import { randomUUID } from 'crypto'
 
 const OPENCLAW_IMAGE = process.env.OPENCLAW_IMAGE || 'ghcr.io/placeparks/bot-saas/openclaw-wrapper:latest'
 
-// Import pairing server payload + explicit start command builder.
-import { PAIRING_SCRIPT_B64, buildRailwayStartCommand } from '@/lib/railway/deploy'
+// Import pairing server script + start command builders from existing code
+import { PAIRING_SCRIPT_B64, buildStartScript, buildRailwayStartCommand } from '@/lib/railway/deploy'
+
+/** Build a start command that writes SOUL.md + IDENTITY.md then runs the original entrypoint. */
+function buildWrapperStartCommand(): string {
+  // This runs BEFORE the entrypoint; writes workspace files from env vars then execs entrypoint
+  return [
+    '/bin/bash -c \'',
+    'CONFIG_DIR="${OPENCLAW_CONFIG_DIR:-$HOME/.openclaw}";',
+    'WORKSPACE_DIR="$CONFIG_DIR/workspace";',
+    'mkdir -p "$WORKSPACE_DIR";',
+    // Write IDENTITY.md with agent name
+    'if [ -n "$_AGENT_NAME" ]; then printf "# Identity\\n\\nname: %s\\n" "$_AGENT_NAME" > "$WORKSPACE_DIR/IDENTITY.md"; echo "[STARTUP] Wrote IDENTITY.md: $_AGENT_NAME"; fi;',
+    // Write SOUL.md with system prompt
+    'SOUL="";',
+    'if [ -n "$_AGENT_NAME" ]; then SOUL="# $_AGENT_NAME\n\n"; fi;',
+    'if [ -n "$_SYSTEM_PROMPT" ]; then SOUL="${SOUL}$_SYSTEM_PROMPT"; fi;',
+    'if [ -n "$SOUL" ]; then printf "%b" "$SOUL" > "$WORKSPACE_DIR/SOUL.md"; echo "[STARTUP] Wrote SOUL.md"; fi;',
+    'exec /usr/local/bin/openclaw-entrypoint.sh',
+    '\'',
+  ].join(' ')
+}
 
 export class RailwayProvider implements DeploymentProvider {
 
@@ -79,7 +99,7 @@ export class RailwayProvider implements DeploymentProvider {
 
       // Set start command + restart policy
       await railway.updateServiceInstance(serviceId, {
-        startCommand: buildRailwayStartCommand(),
+        startCommand: buildWrapperStartCommand(),
         restartPolicyType: 'ON_FAILURE',
         restartPolicyMaxRetries: 10,
       })
@@ -248,7 +268,7 @@ export class RailwayProvider implements DeploymentProvider {
 
     // Ensure start command writes SOUL.md
     await railway.updateServiceInstance(instance.containerId, {
-      startCommand: buildRailwayStartCommand(),
+      startCommand: buildWrapperStartCommand(),
     })
 
     // Redeploy to apply changes
