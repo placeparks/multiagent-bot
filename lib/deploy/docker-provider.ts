@@ -322,7 +322,7 @@ export class DockerProvider implements DeploymentProvider {
     const containerName = `openclaw-${userId}`
 
     // Clean up existing
-    const existing = await prisma.instance.findUnique({ where: { userId } })
+    const existing = await prisma.instance.findFirst({ where: { userId }, orderBy: { createdAt: 'asc' } })
     if (existing) {
       try {
         const container = this.docker.getContainer(existing.containerName)

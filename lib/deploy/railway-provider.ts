@@ -58,7 +58,7 @@ export class RailwayProvider implements DeploymentProvider {
     const serviceName = `openclaw-${userId}`
 
     // Clean up any existing instance
-    const existing = await prisma.instance.findUnique({ where: { userId } })
+    const existing = await prisma.instance.findFirst({ where: { userId }, orderBy: { createdAt: 'asc' } })
     if (existing) {
       try {
         if (existing.containerId) await railway.deleteService(existing.containerId)

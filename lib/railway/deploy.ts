@@ -455,7 +455,7 @@ export async function deployInstance(
   const serviceName = `openclaw-${userId}`
 
   // --- Clean up any pre-existing instance ---
-  const existing = await prisma.instance.findUnique({ where: { userId } })
+  const existing = await prisma.instance.findFirst({ where: { userId }, orderBy: { createdAt: 'asc' } })
   if (existing) {
     console.log(`⚠️  Cleaning up existing DB instance for user ${userId}...`)
     try {
