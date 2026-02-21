@@ -107,14 +107,28 @@ export async function GET(
       errors.push(`${attempt.name}: ${res.status} ${errText.slice(0, 180)}`)
     }
 
-    return NextResponse.json(
-      {
-        error: 'Internal agent call failed for all request formats',
-        details: errors,
-      },
-      { status: 502 }
+    console.warn('[internal-agent] all attempts failed', {
+      instanceId,
+      agentId,
+      attempts: errors,
+    })
+
+    // Return 200 so web_fetch can read details directly instead of wrapping as transport failure.
+    return new Response(
+      [
+        '[INTERNAL AGENT ERROR]',
+        `instanceId=${instanceId}`,
+        `agentId=${agentId}`,
+        ...errors.map(e => `- ${e}`),
+      ].join('\n'),
+      { headers: { 'Content-Type': 'text/plain; charset=utf-8' } }
     )
   } catch (err: any) {
-    return NextResponse.json({ error: `Internal agent relay error: ${err.message}` }, { status: 502 })
+    console.error('[internal-agent] relay exception', { instanceId, agentId, error: err?.message })
+    // Return 200 for same reason as above; keep error visible to coordinator and logs.
+    return new Response(
+      `[INTERNAL AGENT ERROR]\ninstanceId=${instanceId}\nagentId=${agentId}\nrelay exception: ${err.message}`,
+      { headers: { 'Content-Type': 'text/plain; charset=utf-8' } }
+    )
   }
 }
