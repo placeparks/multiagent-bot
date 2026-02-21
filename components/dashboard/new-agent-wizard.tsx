@@ -25,7 +25,6 @@ const defaultSkills = {
   browserEnabled: false,
   ttsEnabled: false,
   elevenlabsApiKey: '',
-  canvasEnabled: false,
   cronEnabled: false,
   memoryEnabled: false,
 }

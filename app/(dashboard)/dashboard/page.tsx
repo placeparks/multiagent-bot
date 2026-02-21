@@ -9,7 +9,7 @@ import {
   Play, Square, RotateCw, Activity, Bot, MessageSquare,
   ExternalLink, Shield, Flame, Terminal, Cpu, Zap,
   ArrowRight, Hash, Crown, Clock, Server, Settings,
-  Brain, Upload, FileText, Layout
+  Brain, Upload, FileText
 } from 'lucide-react'
 import InstanceStatus from '@/components/dashboard/instance-status'
 import ChannelAccess from '@/components/dashboard/channel-access'
@@ -498,39 +498,6 @@ export default function DashboardPage() {
                 </CardContent>
               </Card>
             </motion.div>
-
-            {/* Canvas Viewer — only shown when canvas skill is enabled */}
-            {config?.canvasEnabled === true && (
-              <motion.div
-                initial={{ opacity: 0, x: 20 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ duration: 0.5, delay: 0.48 }}
-              >
-                <Card className="border border-red-500/15 bg-white/[0.02] text-white overflow-hidden">
-                  <div className="flex items-center gap-2 px-4 py-2.5 border-b border-red-500/10 bg-[#0a0a0a]/50">
-                    <div className="w-2 h-2 rounded-full bg-red-500/60" />
-                    <span className="text-[10px] font-mono text-red-500/50 uppercase tracking-wider">canvas</span>
-                  </div>
-                  <CardContent className="pt-5 space-y-3">
-                    <div className="flex items-center gap-2 mb-1">
-                      <Layout className="h-4 w-4 text-red-400/70" />
-                      <span className="text-sm text-white/70">Canvas Viewer</span>
-                    </div>
-                    <p className="text-[11px] text-white/40 font-mono leading-relaxed">
-                      View what your bot is currently presenting on the canvas.
-                    </p>
-                    <Button
-                      variant="outline"
-                      className="w-full border-red-500/20 text-red-400 hover:border-red-500/40 hover:bg-red-500/5 transition-all duration-300 font-mono text-xs"
-                      onClick={() => router.push('/dashboard/canvas')}
-                    >
-                      <Layout className="h-3.5 w-3.5 mr-1.5" />
-                      Open Canvas
-                    </Button>
-                  </CardContent>
-                </Card>
-              </motion.div>
-            )}
 
             {/* Help & Support */}
             <motion.div

@@ -34,7 +34,6 @@ type OnboardConfig = {
   browserEnabled: boolean
   ttsEnabled: boolean
   elevenlabsApiKey: string
-  canvasEnabled: boolean
   cronEnabled: boolean
   memoryEnabled: boolean
 }
@@ -112,7 +111,6 @@ export default function OnboardPage() {
     browserEnabled: false,
     ttsEnabled: false,
     elevenlabsApiKey: '',
-    canvasEnabled: false,
     cronEnabled: false,
     memoryEnabled: false,
   })
