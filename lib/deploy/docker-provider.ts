@@ -20,6 +20,7 @@ const DATA_DIR = process.env.OPENCLAW_DATA_DIR || '/data/openclaw'
 const PAIRING_SERVER_JS = `
 const http = require('http');
 const net = require('net');
+const crypto = require('crypto');
 const { spawnSync } = require('child_process');
 
 function send(res, code, data) {
@@ -125,43 +126,125 @@ const handler = (req, res) => {
 
 const server = http.createServer(handler);
 
-// WebSocket tunnel for canvas bridge.
-// /canvas-ws   → ws://localhost:18789 (gateway, requires node auth — legacy)
-// /canvas-ws-host → ws://localhost:18793 (canvasHost standalone — simpler browser auth)
+// Encode a WebSocket text frame (client→server direction, must be masked per RFC 6455)
+function encWsFrame(text) {
+  var pl = Buffer.from(text, 'utf8');
+  var len = pl.length;
+  var mk = crypto.randomBytes(4);
+  var hlen = len < 126 ? 2 : 4;
+  var fr = Buffer.alloc(hlen + 4 + len);
+  fr[0] = 0x81; // FIN + text opcode
+  if (len < 126) { fr[1] = 0x80 | len; }
+  else { fr[1] = 0x80 | 126; fr.writeUInt16BE(len, 2); }
+  mk.copy(fr, hlen);
+  for (var i = 0; i < len; i++) fr[hlen + 4 + i] = pl[i] ^ mk[i % 4];
+  return fr;
+}
+
+// Decode a WebSocket frame (server→client direction, unmasked)
+function decWsFrame(buf) {
+  if (buf.length < 2) return null;
+  var len = buf[1] & 0x7f;
+  var hlen = 2;
+  if (len === 126) { if (buf.length < 4) return null; len = buf.readUInt16BE(2); hlen = 4; }
+  else if (len === 127) { if (buf.length < 10) return null; len = buf.readUInt32BE(6); hlen = 10; }
+  if (buf.length < hlen + len) return null;
+  return { op: buf[0] & 0x0f, pl: buf.slice(hlen, hlen + len), total: hlen + len };
+}
+
+// WebSocket canvas bridge: authenticates as an OpenClaw node then proxies to browser.
 server.on('upgrade', function(req, socket, head) {
   var url = req.url || '';
-  var targetPort;
-  if (url.startsWith('/canvas-ws-host')) {
-    targetPort = 18793;
-  } else if (url.startsWith('/canvas-ws')) {
-    targetPort = 18789;
-  } else {
+  if (!url.startsWith('/canvas-ws')) {
     socket.write('HTTP/1.1 404 Not Found\\r\\n\\r\\n');
     socket.destroy();
     return;
   }
-  var token = process.env.OPENCLAW_GATEWAY_TOKEN || '';
-  var gwSock = net.createConnection(targetPort, 'localhost');
-  gwSock.on('connect', function() {
-    var lines = [
-      'GET / HTTP/1.1',
-      'Host: localhost:' + targetPort,
-      'Upgrade: websocket',
-      'Connection: Upgrade',
-      'Sec-WebSocket-Key: ' + (req.headers['sec-websocket-key'] || 'dGhlIHNhbXBsZSBub25jZQ=='),
-      'Sec-WebSocket-Version: ' + (req.headers['sec-websocket-version'] || '13'),
-    ];
-    if (token && targetPort === 18789) lines.push('Authorization: Bearer ' + token);
-    lines.push('', '');
-    gwSock.write(lines.join('\\r\\n'));
-    if (head && head.length) gwSock.write(head);
-    gwSock.pipe(socket);
-    socket.pipe(gwSock);
+  var gwToken = process.env.OPENCLAW_GATEWAY_TOKEN || '';
+
+  // Complete WS handshake with the browser first
+  var bKey = req.headers['sec-websocket-key'] || '';
+  var bAccept = crypto.createHash('sha1')
+    .update(bKey + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
+  socket.write(
+    'HTTP/1.1 101 Switching Protocols\\r\\n' +
+    'Upgrade: websocket\\r\\n' +
+    'Connection: Upgrade\\r\\n' +
+    'Sec-WebSocket-Accept: ' + bAccept + '\\r\\n\\r\\n'
+  );
+
+  var gw = net.createConnection(18789, '127.0.0.1');
+  var gwBuf = Buffer.alloc(0);
+  var gwHttpOk = false;
+  var authOk = false;
+  var brQueue = (head && head.length) ? [head] : [];
+
+  socket.on('error', function() { try { gw.destroy(); } catch(e) {} });
+  socket.on('close', function() { try { gw.destroy(); } catch(e) {} });
+  gw.on('error', function(e) {
+    console.error('[canvas-ws] gw err:', e.message);
+    try { socket.destroy(); } catch(x) {}
   });
-  gwSock.on('error', function() { try { socket.destroy(); } catch(e) {} });
-  socket.on('error', function() { try { gwSock.destroy(); } catch(e) {} });
-  socket.on('close', function() { try { gwSock.destroy(); } catch(e) {} });
-  gwSock.on('close', function() { try { socket.destroy(); } catch(e) {} });
+  gw.on('close', function() { try { socket.destroy(); } catch(x) {} });
+
+  socket.on('data', function(d) { if (!authOk) brQueue.push(d); });
+
+  gw.on('connect', function() {
+    var gwKey = crypto.randomBytes(16).toString('base64');
+    gw.write(
+      'GET /__openclaw__/ws HTTP/1.1\\r\\n' +
+      'Host: localhost:18789\\r\\n' +
+      'Upgrade: websocket\\r\\n' +
+      'Connection: Upgrade\\r\\n' +
+      'Sec-WebSocket-Key: ' + gwKey + '\\r\\n' +
+      'Sec-WebSocket-Version: 13\\r\\n\\r\\n'
+    );
+  });
+
+  gw.on('data', function(chunk) {
+    gwBuf = Buffer.concat([gwBuf, chunk]);
+    if (!gwHttpOk) {
+      var sep = gwBuf.indexOf('\\r\\n\\r\\n');
+      if (sep < 0) return;
+      gwHttpOk = true;
+      gwBuf = gwBuf.slice(sep + 4);
+    }
+    if (!authOk) {
+      var fr = decWsFrame(gwBuf);
+      if (!fr) return;
+      if (fr.op === 1) {
+        try {
+          var msg = JSON.parse(fr.pl.toString('utf8'));
+          if (msg.event === 'connect.challenge') {
+            var nonce = (msg.payload || {}).nonce || '';
+            gw.write(encWsFrame(JSON.stringify({
+              type: 'event',
+              event: 'connect.auth',
+              payload: { token: gwToken, nonce: nonce }
+            })));
+            authOk = true;
+            var rest = gwBuf.slice(fr.total);
+            gwBuf = null;
+            gw.removeAllListeners('data');
+            socket.removeAllListeners('data');
+            socket.removeAllListeners('error');
+            socket.removeAllListeners('close');
+            gw.removeAllListeners('error');
+            gw.removeAllListeners('close');
+            socket.on('error', function() { try { gw.destroy(); } catch(e) {} });
+            socket.on('close', function() { try { gw.destroy(); } catch(e) {} });
+            gw.on('error', function() { try { socket.destroy(); } catch(e) {} });
+            gw.on('close', function() { try { socket.destroy(); } catch(e) {} });
+            brQueue.forEach(function(d) { gw.write(d); });
+            brQueue = null;
+            if (rest.length) socket.write(rest);
+            gw.on('data', function(d) { try { socket.write(d); } catch(e) {} });
+            socket.on('data', function(d) { try { gw.write(d); } catch(e) {} });
+          }
+        } catch(e) {}
+      }
+    }
+  });
 });
 
 const PORT = parseInt(process.env.PORT || '18800', 10);

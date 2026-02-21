@@ -13,8 +13,7 @@ export const dynamic = 'force-dynamic'
  */
 function injectBridgeShim(html: string, accessUrl: string): string {
   const base = accessUrl.replace(/^https?:\/\//, 'wss://')
-  // Try canvasHost (18793, simpler browser auth) first, fall back to gateway (18789, node auth)
-  const wsHost = base + '/canvas-ws-host'
+  // Routes through pairing server /canvas-ws → gateway challenge-response auth → proxy
   const wsGateway = base + '/canvas-ws'
   const shim = `<script>
 (function(){
