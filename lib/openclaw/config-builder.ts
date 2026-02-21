@@ -145,7 +145,11 @@ export function generateOpenClawConfig(userConfig: UserConfiguration) {
           enabled: userConfig.webSearchEnabled || false,
           ...(userConfig.braveApiKey && { apiKey: userConfig.braveApiKey })
         }
-      }
+      },
+      sessions: {
+        // Allow coordinator to discover and message specialist sessions across agents.
+        visibility: 'all',
+      },
     }
   }
 
@@ -194,6 +198,12 @@ export function generateOpenClawConfig(userConfig: UserConfiguration) {
     config.tools.agentToAgent = {
       enabled: true,
       allow: specialistIds,
+    }
+
+    // In sandboxed sessions, keep session tools visible across agents.
+    config.agents.defaults.sandbox = {
+      ...(config.agents.defaults.sandbox || {}),
+      sessionToolsVisibility: 'all',
     }
 
     const bindings = userConfig.nativeMultiAgent.agents.flatMap(agent =>
@@ -474,23 +484,29 @@ export function buildNativeOrchestrationInstructions(
   _baseUrl: string
 ): string {
   const list = specialists
-    .map(s => `- ${s.name} (id: "${s.id}")${s.role ? ` — ${s.role}` : ''}`)
+    .map(s => `- ${s.name} (id: "${s.id}")${s.role ? ` - ${s.role}` : ''}`)
     .join('\n')
 
   return `[NATIVE MULTI-AGENT ORCHESTRATION]
 You are the coordinator agent. You have specialist agents in this same gateway:
 ${list}
 
-Use session tools to delegate to specialists:
-1) sessions_spawn(task: "<subtask>", agentId: "<agent-id>")
-2) Read the spawned session result and merge it into your final response.
+Use session tools to delegate to specialists.
+Primary path (synchronous delegation):
+1) sessions_list(limit: 200, activeMinutes: 1440)
+2) Find a session key belonging to the chosen specialist agent.
+3) sessions_send(sessionKey: "<specialist-session-key>", message: "<subtask>", timeoutSeconds: 60)
+4) Merge that specialist reply into your final response.
 
-If a specialist needs a follow-up, send it using sessions_send with that spawned session's key/id.
+Spawn path (when no specialist session exists yet):
+1) sessions_spawn(task: "<subtask>", agentId: "<agent-id>")
+2) Use childSessionKey for follow-up sessions_send calls when needed.
+
 Do not use web_fetch for same-gateway specialist delegation.
 
 Routing policy:
 - Match the task to the closest specialist by their role.
-- For ambiguous tasks, choose the best fit and proceed — do not ask the user which agent to use.
+- For ambiguous tasks, choose the best fit and proceed; do not ask the user which agent to use.
 - You may delegate multiple subtasks in parallel if they are independent.
 
 Output format:
@@ -499,7 +515,7 @@ Append a routing summary at the end of your reply:
 - <agent-id>: <what was delegated>
 [/ROUTING TRACE]
 
-If session delegation fails for a specialist, handle that subtask yourself and note it in ROUTING TRACE.
+If session delegation fails for a specialist, handle that subtask yourself and note the exact tool error in ROUTING TRACE.
 [/NATIVE MULTI-AGENT ORCHESTRATION]`
 }
 
