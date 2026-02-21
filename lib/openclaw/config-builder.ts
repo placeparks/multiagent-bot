@@ -242,19 +242,6 @@ export function generateOpenClawConfig(userConfig: UserConfiguration) {
   // OpenClaw's memorySearch requires git to commit workspace files, which fails in Railway
   // containers (no git author configured). Nexus Memory uses web_fetch + our REST API instead.
 
-  // Agent-to-agent → tools.agentToAgent
-  if (userConfig.agentToAgentTargets?.length) {
-    config.tools.agentToAgent = {
-      enabled: true,
-      agents: userConfig.agentToAgentTargets.map(t => ({
-        id: t.id,
-        name: t.name,
-        gatewayUrl: t.gatewayUrl,
-        token: t.token,
-      })),
-    }
-  }
-
   // Canvas → top-level canvasHost (not tools.canvas)
   if (userConfig.canvasEnabled) {
     config.canvasHost = { enabled: true, port: 18793 }
