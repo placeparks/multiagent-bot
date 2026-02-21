@@ -34,13 +34,11 @@ export async function GET(
 
   const instance = await prisma.instance.findUnique({
     where: { id: instanceId },
-    select: { serviceUrl: true },
+    select: { serviceUrl: true, accessUrl: true },
   })
-  if (!instance?.serviceUrl) {
-    return NextResponse.json({ error: 'Instance service URL not found' }, { status: 503 })
+  if (!instance?.serviceUrl && !instance?.accessUrl) {
+    return NextResponse.json({ error: 'Instance URL not found' }, { status: 503 })
   }
-
-  const gatewayUrl = `${instance.serviceUrl}/v1/chat/completions`
   try {
     const attempts: Array<{
       name: string
@@ -84,27 +82,35 @@ export async function GET(
       },
     ]
 
+    const gatewayBases = [instance.serviceUrl, instance.accessUrl].filter(Boolean) as string[]
     const errors: string[] = []
-    for (const attempt of attempts) {
-      const res = await fetch(gatewayUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${sourceConfig.gatewayToken}`,
-          ...(attempt.headers ?? {}),
-        },
-        body: JSON.stringify(attempt.body),
-        signal: AbortSignal.timeout(60_000),
-      })
+    for (const base of gatewayBases) {
+      const gatewayUrl = `${String(base).replace(/\/$/, '')}/v1/chat/completions`
+      for (const attempt of attempts) {
+        try {
+          const res = await fetch(gatewayUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${sourceConfig.gatewayToken}`,
+              ...(attempt.headers ?? {}),
+            },
+            body: JSON.stringify(attempt.body),
+            signal: AbortSignal.timeout(60_000),
+          })
 
-      if (res.ok) {
-        const data = await res.json()
-        const content = data?.choices?.[0]?.message?.content ?? JSON.stringify(data)
-        return new Response(content, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } })
+          if (res.ok) {
+            const data = await res.json()
+            const content = data?.choices?.[0]?.message?.content ?? JSON.stringify(data)
+            return new Response(content, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } })
+          }
+
+          const errText = await res.text()
+          errors.push(`${gatewayUrl} | ${attempt.name}: ${res.status} ${errText.slice(0, 180)}`)
+        } catch (err: any) {
+          errors.push(`${gatewayUrl} | ${attempt.name}: fetch exception ${err?.message ?? 'unknown error'}`)
+        }
       }
-
-      const errText = await res.text()
-      errors.push(`${attempt.name}: ${res.status} ${errText.slice(0, 180)}`)
     }
 
     console.warn('[internal-agent] all attempts failed', {
