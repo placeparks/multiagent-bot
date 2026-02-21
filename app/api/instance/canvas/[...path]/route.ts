@@ -77,9 +77,15 @@ export async function GET(
   const gatewayToken = configRow?.gatewayToken ?? null
 
   // Proxy path directly onto the accessUrl — the gateway serves canvas at /__openclaw__/canvas/
-  // e.g. pathStr = "__openclaw__/canvas/" → upstreamUrl = "https://<svc>/__openclaw__/canvas/"
-  const pathStr = (params.path ?? []).join('/')
-  const upstreamUrl = `${accessUrl}/${pathStr}`
+  // params.path for "/api/instance/canvas/__openclaw__/canvas/" → ['__openclaw__', 'canvas', '']
+  // params.path for "/api/instance/canvas/__openclaw__/canvas"  → ['__openclaw__', 'canvas']
+  // For directory-like paths (no file extension in last segment), always add trailing slash
+  // so Railway's router for the OpenClaw service can match the route.
+  const segments = params.path ?? []
+  const lastSegment = segments[segments.length - 1] ?? ''
+  const pathStr = segments.join('/')
+  const needsSlash = !lastSegment.includes('.') && !pathStr.endsWith('/')
+  const upstreamUrl = `${accessUrl}/${pathStr}${needsSlash ? '/' : ''}`
 
   try {
     const headers: Record<string, string> = {}
