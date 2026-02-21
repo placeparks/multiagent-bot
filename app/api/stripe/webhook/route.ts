@@ -172,6 +172,7 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
         instanceId: deployment.instanceId,
         provider: config.provider,
         apiKey: encryptedApiKey,
+        gatewayToken: deployment.gatewayToken,
         model: config.model || getDefaultModel(config.provider),
         webSearchEnabled: config.webSearchEnabled || false,
         braveApiKey: config.braveApiKey ? encrypt(config.braveApiKey) : null,

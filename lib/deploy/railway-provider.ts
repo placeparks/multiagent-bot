@@ -87,7 +87,7 @@ export class RailwayProvider implements DeploymentProvider {
       // Build env vars
       const envVars = buildEnvironmentVariables(config)
       envVars.PORT = '18800'
-      const gatewayToken = randomUUID()
+      const gatewayToken = config.gatewayToken || randomUUID()
       envVars.OPENCLAW_GATEWAY_TOKEN = gatewayToken
       const openclawConfig = generateOpenClawConfig({ ...config, gatewayToken })
       envVars.OPENCLAW_CONFIG = JSON.stringify(openclawConfig)
@@ -143,6 +143,7 @@ export class RailwayProvider implements DeploymentProvider {
         port,
         accessUrl: publicDomain ? `https://${publicDomain}` : '',
         status: 'DEPLOYING',
+        gatewayToken,
       }
     } catch (error: any) {
       await prisma.instance.update({
@@ -253,6 +254,12 @@ export class RailwayProvider implements DeploymentProvider {
     const openclawConfig = generateOpenClawConfig({ ...config, gatewayToken })
     envVars.OPENCLAW_CONFIG = JSON.stringify(openclawConfig)
     envVars._PAIRING_SCRIPT_B64 = PAIRING_SCRIPT_B64
+
+    // Persist the gateway token so the canvas proxy can read it
+    await prisma.configuration.update({
+      where: { instanceId },
+      data: { gatewayToken },
+    })
 
     // Update env vars on Railway
     await railway.setVariables(instance.containerId, envVars)

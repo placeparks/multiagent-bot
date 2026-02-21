@@ -350,7 +350,7 @@ export class DockerProvider implements DeploymentProvider {
       const pairingScriptPath = this.ensurePairingServer()
 
       // Build config
-      const gatewayToken = randomUUID()
+      const gatewayToken = config.gatewayToken || randomUUID()
       const openclawConfig = generateOpenClawConfig({ ...config, gatewayToken })
       this.writeConfigFile(instance.id, openclawConfig)
 
@@ -417,6 +417,7 @@ export class DockerProvider implements DeploymentProvider {
         port,
         accessUrl: '',
         status: 'DEPLOYING',
+        gatewayToken,
       }
     } catch (error: any) {
       await prisma.instance.update({
@@ -506,6 +507,12 @@ export class DockerProvider implements DeploymentProvider {
     const gatewayToken = config.gatewayToken || randomUUID()
     const openclawConfig = generateOpenClawConfig({ ...config, gatewayToken })
     this.writeConfigFile(instanceId, openclawConfig)
+
+    // Persist the gateway token so the canvas proxy can read it
+    await prisma.configuration.update({
+      where: { instanceId },
+      data: { gatewayToken },
+    })
 
     // Restart container to pick up new config (config is mounted as volume)
     const container = this.docker.getContainer(instance.containerName)

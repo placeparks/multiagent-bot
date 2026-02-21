@@ -152,6 +152,7 @@ export async function POST(req: Request) {
         instanceId: deployment.instanceId,
         provider: finalProvider,
         apiKey: encryptedApiKey,
+        gatewayToken: deployment.gatewayToken,
         model: finalModel,
         agentName: name,
         thinkingMode: baseConfig.thinkingMode || 'high',

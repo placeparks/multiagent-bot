@@ -8,6 +8,7 @@ export interface DeploymentResult {
   port: number
   accessUrl: string
   status: string
+  gatewayToken: string
 }
 
 export interface DeploymentProvider {
